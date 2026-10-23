@@ -1,0 +1,17 @@
+[Unit]
+Description=Xiaodu voice input to the existing Codex main conversation
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/xiaodu-jarvis
+Environment=XIAODU_CONFIG=%h/.config/xiaodu-jarvis/config.json
+ExecStart=%h/xiaodu-jarvis/.venv/bin/python %h/xiaodu-jarvis/system/codex-bridge/bridge.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

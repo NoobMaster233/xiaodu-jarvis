@@ -1,0 +1,11 @@
+{
+  "main_thread_id": "YOUR_EXISTING_THREAD_ID",
+  "device_url": "http://device.example:8765",
+  "voice": "juniper",
+  "listen_host": "0.0.0.0",
+  "listen_port": 8766,
+  "backend_model": null,
+  "reasoning_effort": null,
+  "service_tier": null,
+  "codex_socket": null
+}

@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Find existing Codex conversations and delegate through the live voice bridge."""
+import argparse
+import http.client
+import json
+import sys
+
+p=argparse.ArgumentParser(description=__doc__)
+s=p.add_subparsers(dest='command',required=True)
+q=s.add_parser('list');q.add_argument('--search')
+q=s.add_parser('read');q.add_argument('thread')
+q=s.add_parser('send');q.add_argument('--thread',required=True);q.add_argument('--message')
+q=s.add_parser('input');q.add_argument('--message')
+q=s.add_parser('interrupt');q.add_argument('--thread',required=True)
+s.add_parser('tasks');s.add_parser('health')
+s.add_parser('voice-end');s.add_parser('voice-status')
+a=p.parse_args()
+method='GET'; body=None
+if a.command=='list':
+ from urllib.parse import urlencode
+ path='/threads'+('?'+urlencode({'search':a.search}) if a.search else '')
+elif a.command=='read':path='/threads/'+a.thread
+elif a.command in ('send','input'):
+ method='POST';path='/'+a.command
+ body={'text':a.message if a.message is not None else sys.stdin.read()}
+ if a.command=='send':body['thread']=a.thread
+elif a.command=='interrupt':method='POST';path='/interrupt';body={'thread':a.thread}
+elif a.command=='voice-end':method='POST';path='/v1/realtime/end';body={}
+elif a.command=='voice-status':path='/v1/realtime/status'
+else:path='/'+a.command
+try:
+ c=http.client.HTTPConnection('127.0.0.1',8766,timeout=45)
+ c.request(method,path,None if body is None else json.dumps(body,ensure_ascii=False).encode(),{'Content-Type':'application/json'})
+ r=c.getresponse();result=json.loads(r.read());c.close()
+ print(json.dumps(result,ensure_ascii=False,indent=2))
+ raise SystemExit(0 if r.status<300 else 1)
+except (OSError,ValueError) as e:
+ print(type(e).__name__+': conversation bridge unavailable',file=sys.stderr);raise SystemExit(1)

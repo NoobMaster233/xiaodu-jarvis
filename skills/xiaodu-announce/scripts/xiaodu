@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Xiaodu LAN control client. Python 3 standard library; no ADB or project dependencies.
+
+复制本文件即可使用。通过 --url 或 XIAODU_URL 指定你自己的设备地址，无需凭据。
+"""
+import argparse
+import http.client
+import json
+import os
+from pathlib import Path
+import re
+import ssl
+import sys
+import time
+from urllib.parse import urlsplit
+import uuid
+
+TERMINAL={'completed','stopped','failed','expired','unconfirmed'}
+DEFAULT_URL=''
+
+class Client:
+    def __init__(self,args):
+        self.url=args.url or os.environ.get('XIAODU_URL') or DEFAULT_URL
+        if not self.url:raise RuntimeError('请通过 --url 或 XIAODU_URL 指定自己的设备地址')
+        self.address=urlsplit(self.url)
+        if self.address.scheme not in {'http','https'} or not self.address.hostname or self.address.username or self.address.path not in {'','/'} or self.address.query or self.address.fragment:
+            raise RuntimeError('Use a device http(s)://host:port URL without credentials or a path')
+
+    def request(self,method,path,body=None,binary=False):
+        headers={}
+        payload=None
+        if body is not None:
+            payload=json.dumps(body,ensure_ascii=False).encode('utf-8');headers['Content-Type']='application/json'
+        cls=http.client.HTTPSConnection if self.address.scheme=='https' else http.client.HTTPConnection
+        kwargs={'timeout':15}
+        if cls is http.client.HTTPSConnection:kwargs['context']=ssl.create_default_context()
+        conn=cls(self.address.hostname,self.address.port,**kwargs)
+        try:
+            conn.request(method,path,payload,headers);response=conn.getresponse();limit=3*1024*1024 if binary else 65536;raw=response.read(limit+1)
+            if len(raw)>limit:raise RuntimeError('Invalid HTTP reply size')
+            if binary and response.status<300:
+                if response.getheader('Content-Type')!='image/png' or not raw.startswith(b'\x89PNG\r\n\x1a\n'):raise RuntimeError('Device returned an invalid screenshot')
+                return raw
+            try:result=json.loads(raw)
+            except ValueError:raise RuntimeError('Device returned invalid JSON') from None
+            if response.status>=400:
+                code=result.get('error','request_failed')
+                if not isinstance(code,str) or not re.fullmatch('[a-z_]{1,80}',code):code='request_failed'
+                raise RuntimeError('HTTP '+str(response.status)+': '+code)
+            return result
+        finally:conn.close()
+
+    def wait(self,key,timeout):
+        deadline=time.monotonic()+timeout
+        while True:
+            result=self.request('GET','/v1/speech/'+key)
+            if result.get('state') in TERMINAL:return result
+            if time.monotonic()>=deadline:
+                self.request('DELETE','/v1/speech/'+key)
+                raise RuntimeError('Timed out; cancellation requested. Do not automatically replay this request.')
+            time.sleep(.3)
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--url',help='Override the default device URL')
+    sub=parser.add_subparsers(dest='command',required=True)
+    say=sub.add_parser('say',help='Speak text from an argument, --file, or stdin')
+    say.add_argument('text',nargs='?');say.add_argument('--file',type=Path);say.add_argument('--id')
+    say.add_argument('--voice',type=int,choices=[0,1,3,4,5,103,106,110,111,5003,5118])
+    say.add_argument('--no-wait',action='store_true');say.add_argument('--timeout',type=float,default=150)
+    status=sub.add_parser('status');status.add_argument('--id')
+    stop=sub.add_parser('stop');stop.add_argument('--id')
+    sub.add_parser('health',help='Check the device HTTP service and speech readiness')
+    volume=sub.add_parser('volume',help='Read or adjust media volume, in percent')
+    volume.add_argument('value',nargs='?',type=int)
+    volume.add_argument('--delta',type=int)
+    mute=volume.add_mutually_exclusive_group();mute.add_argument('--mute',action='store_true');mute.add_argument('--unmute',action='store_true')
+    brightness=sub.add_parser('brightness',help='Read or adjust screen brightness, 1..100 percent')
+    brightness.add_argument('value',nargs='?',type=int);brightness.add_argument('--delta',type=int)
+    media=sub.add_parser('media',help='Control an active player and read its response')
+    media.add_argument('action',nargs='?',default='status',choices=['status','play','pause','toggle','next','previous','stop'])
+    media.add_argument('--app',choices=['netease','bilibili','vlc'])
+    screen=sub.add_parser('screen',help='Read display state, wake, sleep, show clock or home')
+    screen.add_argument('action',nargs='?',default='status',choices=['status','on','off','clock','home'])
+    app=sub.add_parser('app',help='List apps, inspect foreground app, open one, or navigate')
+    app.add_argument('action',nargs='?',default='current',choices=['current','list','open','home','back'])
+    app.add_argument('app',nargs='?',choices=['netease','bilibili','vlc','files','clock','settings','easytouch'])
+    sub.add_parser('apps',help='List available application aliases')
+    voice=sub.add_parser('voice',help='Inspect or end the existing realtime call')
+    voice.add_argument('action',nargs='?',default='status',choices=['status','end'])
+    screenshot=sub.add_parser('screenshot',help='Save one screenshot as a PNG')
+    screenshot.add_argument('path',nargs='?',type=Path)
+    args=parser.parse_args()
+    try:
+        if getattr(args,'id',None) is not None and not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',args.id):
+            raise RuntimeError('Invalid request ID')
+        client=Client(args)
+        if args.command=='say':
+            if args.file and args.text is not None:raise RuntimeError('Use a text argument or --file, not both')
+            text=(args.file.read_text() if args.file else args.text if args.text is not None else sys.stdin.read()).strip()
+            if not text or len(text.encode('utf-16-le'))//2>1000 or '\x00' in text:raise RuntimeError('Text must contain 1..1000 UTF-16 characters without NUL')
+            key=args.id or uuid.uuid4().hex
+            body={'id':key,'text':text}
+            if args.voice is not None:body['voice']=args.voice
+            result=client.request('POST','/v1/speech',body)
+            if not args.no_wait and result.get('state') not in TERMINAL:
+                result=client.wait(key,max(1,min(args.timeout,300)))
+            print(json.dumps(result,ensure_ascii=False))
+            return 0 if result.get('state')=='completed' or (args.no_wait and result.get('state') not in TERMINAL) else 2
+        if args.command in {'volume','brightness'}:
+            body={}
+            if args.value is not None:
+                if not (0 if args.command=='volume' else 1)<=args.value<=100:raise RuntimeError('Percentage outside allowed range')
+                body['value']=args.value
+            if args.delta is not None:
+                if not -100<=args.delta<=100:raise RuntimeError('Delta must be between -100 and 100')
+                body['delta']=args.delta
+            if args.command=='volume' and (args.mute or args.unmute):body['mute']=args.mute
+            if len(body)>1:raise RuntimeError('Choose a value, delta, or mute action')
+            result=client.request('POST' if body else 'GET','/v1/'+args.command,body or None)
+        elif args.command=='media':
+            body={'action':args.action}
+            if args.app:body['app']=args.app
+            result=client.request('GET','/v1/media') if args.action=='status' else client.request('POST','/v1/media',body)
+        elif args.command=='screen':result=client.request('GET','/v1/screen') if args.action=='status' else client.request('POST','/v1/screen',{'action':args.action})
+        elif args.command in {'app','apps'}:
+            action='list' if args.command=='apps' else args.action
+            app_id=getattr(args,'app',None)
+            if (action=='open')!=(app_id is not None):raise RuntimeError('Use app open APP; other app commands take no APP')
+            if action in {'list','current'}:result=client.request('GET','/v1/apps' if action=='list' else '/v1/app')
+            else:
+                body={'action':action}
+                if app_id:body['app']=app_id
+                result=client.request('POST','/v1/app',body)
+        elif args.command=='voice':result=client.request('GET','/v1/voice/status') if args.action=='status' else client.request('POST','/v1/voice/end',{})
+        elif args.command=='screenshot':
+            raw=client.request('GET','/v1/screenshot',binary=True)
+            path=args.path or Path('xiaodu-screen-'+time.strftime('%Y%m%d-%H%M%S')+'.png')
+            with path.open('xb') as out:out.write(raw)
+            result={'saved':str(path.resolve()),'bytes':len(raw)}
+        elif args.command=='status':result=client.request('GET','/v1/speech/'+args.id if args.id else '/v1/device')
+        elif args.command=='health':result=client.request('GET','/health')
+        else:
+            result=client.request('DELETE','/v1/speech/'+args.id) if args.id else client.request('POST','/v1/stop',{})
+            active=result.get('active_cancel_requested')
+            if active:
+                result['active_result']=client.wait(active,10)
+                if result['active_result'].get('state') not in {'stopped','completed'}:
+                    print(json.dumps(result,ensure_ascii=False));return 2
+        print(json.dumps(result,ensure_ascii=False))
+        return 2 if result.get('verified') is False or (args.command=='health' and not result.get('engine_ready')) else 0
+    except (OSError,ValueError,http.client.HTTPException,RuntimeError) as error:
+        message=str(error) if isinstance(error,RuntimeError) else type(error).__name__
+        print(json.dumps({'error':message,'automatic_replay':False},ensure_ascii=False),file=sys.stderr)
+        return 1
+
+if __name__=='__main__':raise SystemExit(main())

@@ -1,0 +1,128 @@
+[
+  {
+    "name": "android",
+    "url": "https://dl.google.com/android/repository/platform-27_r03.zip",
+    "sha256": "020c4c090bc82ce87ebaae5d1a922e21b39a1d03c78ffa43f0c3e42fc7d28169",
+    "archive": "zip",
+    "cached": null,
+    "outputs": [
+      {
+        "path": "android-mini/android-27.jar",
+        "sha256": "c94be7c1b823cd9672636f92d3c995e85cecb3674b2cbd4e8614db731367dc7f",
+        "member": "android-8.1.0/android.jar",
+        "cached": "tools/android-mini/android-27.jar"
+      }
+    ]
+  },
+  {
+    "name": "r8",
+    "url": "https://dl.google.com/dl/android/maven2/com/android/tools/r8/8.3.37/r8-8.3.37.jar",
+    "sha256": "59753e70a74f918389cc87f1b7d66b5c0862932559167425708ded159e3de439",
+    "archive": "raw",
+    "cached": null,
+    "outputs": [
+      {
+        "path": "android-mini/r8.jar",
+        "sha256": "59753e70a74f918389cc87f1b7d66b5c0862932559167425708ded159e3de439",
+        "member": null,
+        "cached": "tools/android-mini/r8.jar"
+      }
+    ]
+  },
+  {
+    "name": "webrtc",
+    "url": "https://repo.maven.apache.org/maven2/io/github/webrtc-sdk/android/125.6422.07/android-125.6422.07.aar",
+    "sha256": "a0ae793a4539f0da6fc9b71806ace876e50b008c30c66fd2ec5eee38ee030474",
+    "archive": "zip",
+    "cached": "tools/webrtc-125.6422.07/android-125.6422.07.aar",
+    "outputs": [
+      {
+        "path": "webrtc-125.6422.07/android-125.6422.07.aar",
+        "sha256": "a0ae793a4539f0da6fc9b71806ace876e50b008c30c66fd2ec5eee38ee030474",
+        "member": null,
+        "cached": "tools/webrtc-125.6422.07/android-125.6422.07.aar"
+      },
+      {
+        "path": "webrtc-125.6422.07/classes.jar",
+        "sha256": "b22004ca77ae1c62575eb011a2729acd6500e612e3126ecde3e8c8348715e031",
+        "member": "classes.jar",
+        "cached": "tools/webrtc-125.6422.07/classes.jar"
+      },
+      {
+        "path": "webrtc-125.6422.07/jni/armeabi-v7a/libjingle_peerconnection_so.so",
+        "sha256": "976ad84ff585eb7121ff7d800a172e60995f634d59a64a7f913e4dac8907b08e",
+        "member": "jni/armeabi-v7a/libjingle_peerconnection_so.so",
+        "cached": "tools/webrtc-125.6422.07/jni/armeabi-v7a/libjingle_peerconnection_so.so"
+      }
+    ]
+  },
+  {
+    "name": "frida",
+    "url": "https://github.com/frida/frida/releases/download/16.7.19/frida-inject-16.7.19-android-arm.xz",
+    "sha256": "d914a23d45fb0479ac364ca1c85df884a576c70c5b3b15c94ce292527a4238db",
+    "archive": "xz",
+    "cached": null,
+    "outputs": [
+      {
+        "path": "runtime/frida-inject",
+        "sha256": "e865f8746cee97761af50a31528315baf14cc047eedd35242f30a744b91d25ea",
+        "member": null,
+        "cached": "tools/frida-inject-16.7.19/frida-inject"
+      }
+    ]
+  },
+  {
+    "name": "sherpa",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-android.tar.bz2",
+    "sha256": "2ff63469a71cb6009aa2e3ed5f4a670f8abdcbe4bb9ffd23776afc792a6b4f44",
+    "archive": "tar",
+    "cached": "tools/sherpa-kws-1.13.8/sherpa-onnx-v1.13.8-android.tar.bz2",
+    "outputs": [
+      {
+        "path": "runtime/lib/libonnxruntime.so",
+        "sha256": "7a8f17a707e52e0ac3a026be319272876d9eae61f4bb19585292772d785f7744",
+        "member": "./jniLibs/armeabi-v7a/libonnxruntime.so",
+        "cached": "tools/sherpa-kws-1.13.8/jniLibs/armeabi-v7a/libonnxruntime.so"
+      },
+      {
+        "path": "runtime/lib/libsherpa-onnx-jni.so",
+        "sha256": "3d6b6daf6d23162dceb1df91ac075a42a09b60fafb5f9400cba22562f10a1dc0",
+        "member": "./jniLibs/armeabi-v7a/libsherpa-onnx-jni.so",
+        "cached": "tools/sherpa-kws-1.13.8/jniLibs/armeabi-v7a/libsherpa-onnx-jni.so"
+      }
+    ]
+  },
+  {
+    "name": "model",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2",
+    "sha256": "68447f4fbc67e70eee3a93961f36e81e98f47aef73ce7e7ca00885c6cd3616a6",
+    "archive": "tar",
+    "cached": "tools/sherpa-kws-1.13.8/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2",
+    "outputs": [
+      {
+        "path": "runtime/model/encoder.onnx",
+        "sha256": "408bbd740838c42d5bf6d1c5b80b3c88b616c7860b92d980328b5b068c76ae48",
+        "member": "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx",
+        "cached": "tools/sherpa-kws-1.13.8/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx"
+      },
+      {
+        "path": "runtime/model/decoder.onnx",
+        "sha256": "63a22dd60f40fff082ac3e09afa507f6787da36df76ded2fbe145fa233e22c21",
+        "member": "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/decoder-epoch-13-avg-2-chunk-16-left-64.onnx",
+        "cached": "tools/sherpa-kws-1.13.8/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/decoder-epoch-13-avg-2-chunk-16-left-64.onnx"
+      },
+      {
+        "path": "runtime/model/joiner.onnx",
+        "sha256": "190d4067b4cc20b72a42a1916e69d92052000fb7051a427ebb1bc72a69207dc1",
+        "member": "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx",
+        "cached": "tools/sherpa-kws-1.13.8/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx"
+      },
+      {
+        "path": "runtime/model/tokens.txt",
+        "sha256": "2d3f32311f9b692b964da3c90e830258d3e78e013cb0c992dbfb15cd5a1a71b0",
+        "member": "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/tokens.txt",
+        "cached": "tools/sherpa-kws-1.13.8/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/tokens.txt"
+      }
+    ]
+  }
+]

@@ -1,0 +1,4 @@
+interface:
+  display_name: "小度日常控制"
+  short_description: "直接控制家中小度的音量、亮度、播放、屏幕和应用，查询状态并按需语音播报"
+  default_prompt: "使用 $xiaodu-announce 查询或控制家中小度，并核对实际结果。"
