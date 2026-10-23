@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'system/codex-bridge'))
-from configuration import SETTINGS
+from configuration import SETTINGS,local_bridge_url,validate_url
 STATE=Path(SETTINGS['state_dir'])
 DIRECTORIES={
     'kws':'/data/data/com.baidu.duershow.dcs/files/xiaodu-http/timings',
@@ -49,18 +49,21 @@ def main():
     parser.add_argument('command',choices=['on','off','status','collect'])
     parser.add_argument('--out',type=Path,help='New output file for collect')
     parser.add_argument('--serial',required=True,help='Explicit adb device serial')
+    parser.add_argument('--bridge-url',help='覆盖配置中的本机桥接地址')
     args=parser.parse_args()
     if args.command=='collect' and args.out is None:parser.error('collect requires --out')
     ADB='adb'
     info={'serial':args.serial}
     def shell(command,root=False):
-        if root:command='/sbin/su -c '+shlex.quote(command)
+        if root:command='su -c '+shlex.quote(command)
         p=subprocess.run([str(ADB),'-s',info['serial'],'shell',command],capture_output=True,text=True,timeout=15)
         if p.returncode:raise RuntimeError('device diagnostic operation failed')
         return p.stdout.strip()
     if args.command in ('on','off'):
         enabled=args.command=='on'
         shell('setprop persist.xiaodu.voice_timing '+('1' if enabled else '0'),True)
+        actual=shell('getprop persist.xiaodu.voice_timing')
+        if actual!=('1' if enabled else '0'):raise RuntimeError('device timing toggle unconfirmed')
         STATE.mkdir(parents=True,exist_ok=True,mode=0o700)
         flag=STATE/'voice-timing.off'
         if enabled:flag.unlink(missing_ok=True)
@@ -69,7 +72,8 @@ def main():
         device=shell('getprop persist.xiaodu.voice_timing')
         observed=None
         try:
-            with urllib.request.urlopen('http://127.0.0.1:8766/v1/realtime/status',timeout=4) as response:observed=json.load(response).get('timing_enabled')
+            base=validate_url(args.bridge_url) if args.bridge_url else local_bridge_url(SETTINGS)
+            with urllib.request.urlopen(base+'/v1/realtime/status',timeout=4) as response:observed=json.load(response).get('timing_enabled')
         except (OSError,ValueError):pass
         print(json.dumps({'device_enabled':device not in ('0','false','off','no'),
             'bridge_enabled':observed,'bridge_flag_enabled':not (STATE/'voice-timing.off').exists(),

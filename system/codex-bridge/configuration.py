@@ -8,6 +8,7 @@ CONFIG_PATH=Path(os.environ.get('XIAODU_CONFIG',str(Path.home()/'.config/xiaodu-
 
 
 def validate_url(value):
+    if not isinstance(value,str):raise ValueError('地址必须是字符串')
     address=urlsplit(value)
     if address.scheme!='http' or not address.hostname or address.username or address.password or address.path not in ('','/') or address.query or address.fragment:
         raise ValueError('请填写可信局域网 HTTP 地址，不能含用户名、密码或路径')
@@ -28,11 +29,22 @@ def load_config(path=CONFIG_PATH,required=False):
         value.update(data)
     elif required:raise ValueError('请先从 config.example.json 创建自己的配置，并设置 XIAODU_CONFIG')
     if value['device_url']:value['device_url']=validate_url(value['device_url'])
+    if not isinstance(value['main_thread_id'],str):raise ValueError('主对话 ID 必须是字符串')
     if required and (not value['main_thread_id'] or value['main_thread_id'].startswith('YOUR_') or not value['device_url']):
         raise ValueError('请填写自己的 device_url 和 main_thread_id')
-    if not isinstance(value['listen_port'],int) or not 1<=value['listen_port']<=65535:raise ValueError('监听端口不合法')
+    if type(value['listen_port']) is not int or not 1<=value['listen_port']<=65535:raise ValueError('监听端口不合法')
+    if not isinstance(value['listen_host'],str) or not value['listen_host']:raise ValueError('监听地址不合法')
     if not isinstance(value['voice'],str) or not value['voice']:raise ValueError('音色名称不合法')
+    if not isinstance(value['state_dir'],str) or not value['state_dir']:raise ValueError('状态目录不合法')
+    value['state_dir']=str(Path(value['state_dir']).expanduser())
     return value
+
+
+def local_bridge_url(settings):
+    host=settings['listen_host']
+    host={'0.0.0.0':'127.0.0.1','::':'::1'}.get(host,host)
+    if ':' in host:host='['+host+']'
+    return 'http://'+host+':'+str(settings['listen_port'])
 
 
 SETTINGS=load_config()

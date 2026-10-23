@@ -5,7 +5,7 @@ import re
 
 ROOT=Path(__file__).resolve().parents[1]
 TREES=('system','client','skills','scripts','tools','docs','examples','.github')
-TOP=('README.md','LICENSE','THIRD_PARTY_NOTICES.md','config.example.json','requirements.txt','.gitignore')
+TOP=('README.md','LICENSE','THIRD_PARTY_NOTICES.md','config.example.json','requirements.txt','.gitignore','VERSION','CHANGELOG.md')
 FORBIDDEN={'.p12','.pfx','.jks','.keystore','.wav','.pcm','.img','.bin','.apk','.jar','.pyc'}
 PATTERNS={
     'private_network': re.compile(rb'\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b'),
@@ -17,12 +17,17 @@ PATTERNS={
 
 
 def public_files(root=ROOT):
-    paths=[root/p for p in TOP if (root/p).is_file()]
+    paths=[]
+    def accept(p):
+        if p.is_symlink() or not p.resolve().is_relative_to(root.resolve()):
+            raise ValueError('公开文件不能是链接或仓库外文件：'+str(p.relative_to(root)))
+        if p.is_file():paths.append(p)
+    for p in TOP:accept(root/p)
     for tree in TREES:
+        if (root/tree).is_symlink():raise ValueError('公开目录不能是链接：'+tree)
         for p in (root/tree).rglob('*'):
             if '__pycache__' in p.parts: continue
-            if p.is_symlink():raise ValueError('公开文件不能是符号链接：'+str(p.relative_to(root)))
-            if p.is_file():paths.append(p)
+            accept(p)
     return sorted(paths)
 
 

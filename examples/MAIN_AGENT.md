@@ -9,3 +9,14 @@
 - 用户要求挂断、结束语音、休息或明确告别时，执行 `codex-conversations voice-end`。这只结束当前音频，不取消其他后台任务。
 - 设备状态控制均是一次性操作。本次设置并回读成功后即完成，之后其他 Agent 或用户改变状态时，不得凭旧指令再设置、自动纠偏或在收尾恢复旧值。
 - 控制命令失败或未确认时据实说明；不自动重启设备、不反复发送有副作用的媒体动作。
+
+## 部署者填写的工具位置
+
+现有 Codex 不会自动继承另一个终端的 export。将下面路径、设备地址和端口替换为自己的值，保留在主对话能读取的规则中：
+
+```sh
+python3 /你的绝对目录/xiaodu-jarvis/client/xiaodu --url http://device.example:8765 health
+python3 /你的绝对目录/xiaodu-jarvis/client/codex-conversations --url http://127.0.0.1:8766 health
+```
+
+让实际主对话的工具环境执行上述只读命令，确认能找到 CLI 和地址；无需通过调音量、播报或新通话验证路径。

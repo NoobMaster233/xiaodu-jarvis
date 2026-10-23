@@ -69,6 +69,7 @@ def main():
              "size": result.stat().st_size,
              "sources": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                          for p in sorted(SOURCE.rglob("*")) if p.is_file()}}
+    proof["build_script_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     (BUILD.parent / "build-proof.json").write_text(json.dumps(proof, indent=2))
     print(json.dumps({k: v for k, v in proof.items() if k != "sources"}, indent=2))
 

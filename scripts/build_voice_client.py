@@ -55,6 +55,7 @@ def main():
     run(['apksigner','verify','--verbose',result])
     proof={'apk':str(result.relative_to(ROOT)),'sha256':hashlib.sha256(result.read_bytes()).hexdigest(),'bytes':result.stat().st_size,'abi':'armeabi-v7a','api':27,'webrtc_aar_sha256':digest,
         'sources':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for tree in (SOURCE,shared) for p in tree.rglob('*') if p.is_file()}}
+    proof['build_script_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     (BUILD.parent/'build-proof.json').write_text(json.dumps(proof,indent=2)+'\n')
     print(json.dumps({k:v for k,v in proof.items() if k!='sources'},indent=2))
 

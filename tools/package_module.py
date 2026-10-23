@@ -6,12 +6,11 @@ from pathlib import Path
 import stat
 import zipfile
 from prepare import ROOT, CACHE, MANIFEST, digest
+from artifacts import validate_build
 
 
 def package():
-    proof = json.loads((ROOT/'artifacts/speech-http/build-proof.json').read_text())
-    jar = ROOT/proof['jar']
-    if digest(jar) != proof['sha256']: raise ValueError('服务 JAR 与构建记录不符')
+    proof,jar=validate_build('speech-http')
     for entry in json.loads(MANIFEST.read_text()):
         if entry['name'] not in {'frida','sherpa','model'}: continue
         for item in entry['outputs']:
@@ -34,6 +33,9 @@ def package():
             item.external_attr = (stat.S_IFREG|mode)<<16
             archive.writestr(item, source.read_bytes(), compress_type=zipfile.ZIP_DEFLATED)
         archive.writestr('skip_mount', '')
+        checks={name:digest(source) for name,source in files.items()}
+        checks['skip_mount']=hashlib.sha256(b'').hexdigest()
+        archive.writestr('SHA256SUMS',''.join(checksum+'  '+name+'\n' for name,checksum in sorted(checks.items())))
     print(json.dumps({'file':str(result.relative_to(ROOT)), 'sha256':digest(result)}, ensure_ascii=False))
     return result
 

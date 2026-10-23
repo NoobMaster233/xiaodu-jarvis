@@ -53,7 +53,7 @@ CLI 的媒体动作是 `play/pause/toggle/next/previous/stop`，可用 `--app ne
 
 ## Codex 对话 CLI
 
-`client/codex-conversations` 在管理机本地访问 `127.0.0.1:8766`，用于查看已有对话、委派、状态和挂断：
+`client/codex-conversations` 优先使用 `--url`，其次 `CODEX_BRIDGE_URL`，再读取 `XIAODU_CONFIG` 或默认桥接 JSON 的监听地址/端口；没有配置时访问 `127.0.0.1:8766`，用于查看已有对话、委派、状态和挂断：
 
 ```sh
 codex-conversations list --search 项目名
@@ -64,4 +64,4 @@ codex-conversations voice-status
 codex-conversations voice-end
 ```
 
-这里的桥接端口若自行改动，需要同步修改该简易 CLI。它访问你已经登录的 Codex，本身不保存登录凭据；桥接接口可触发 Agent 工作，因此同样限于可信主机与局域网。
+自定义端口无需改源码，例如 `codex-conversations --url http://127.0.0.1:9876 voice-status`。它访问你已经登录的 Codex，本身不保存登录凭据；桥接接口可触发 Agent 工作，因此同样限于可信主机与局域网。

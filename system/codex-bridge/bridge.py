@@ -68,8 +68,9 @@ def discover_daemon_socket(directory=Path('/tmp')/('codex-daemon-'+str(os.getuid
 
 
 class Codex:
-    def __init__(self, notify):
+    def __init__(self, notify, endpoint=None):
         self.notify, self.pending, self.seq = notify, {}, 0
+        self.endpoint=endpoint
         self.ws = None
         self.ready = asyncio.Event()
         self.connection_error = 'not_connected'
@@ -77,7 +78,8 @@ class Codex:
     async def run(self):
         while True:
             try:
-                endpoint = Path(SETTINGS['codex_socket']) if SETTINGS['codex_socket'] else await asyncio.to_thread(discover_daemon_socket)
+                selected=self.endpoint or SETTINGS['codex_socket']
+                endpoint = Path(selected) if selected else await asyncio.to_thread(discover_daemon_socket)
                 if not is_app_server_socket(endpoint):raise DaemonDiscoveryError('app_server_not_found')
                 async with websockets.unix_connect(str(endpoint), max_size=32*1024*1024) as ws:
                     self.ws = ws
@@ -164,6 +166,8 @@ class Bridge:
         self.inputs = {}
         self.input_locks = {}
         self.voice_cursor = None
+        self.main_ready=False
+        self.main_error=None
         self.realtime = Realtime(self, MAIN)
         STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.tasks = json.loads((STATE/'tasks.json').read_text()) if (STATE/'tasks.json').exists() else {}
@@ -245,7 +249,12 @@ class Bridge:
         try:
             await self.realtime.event(method, p)
             if method == 'bridge/connected':
-                settings = await self.resume(MAIN, True)
+                self.main_ready=False;self.main_error=None
+                try:settings = await self.resume(MAIN, True)
+                except Exception:
+                    self.main_error='main_resume_failed'
+                    raise
+                self.main_ready=True
                 print(json.dumps({'event': 'main_connected', 'model': settings.get('model'),
                     'effort': settings.get('reasoningEffort'), 'tier': settings.get('serviceTier')}), flush=True)
                 for task in list(self.tasks.values()):
@@ -354,7 +363,9 @@ class Bridge:
             if path.startswith('/v1/realtime/'):
                 return await self.realtime.http(request)
             if request.method == 'GET':
-                if path == '/health': return web.json_response({'ready': self.rpc.ready.is_set(), 'main_thread': MAIN,
+                if path == '/health': return web.json_response({'ready': self.rpc.ready.is_set() and self.main_ready,
+                    'rpc_ready':self.rpc.ready.is_set(),'main_ready':self.rpc.ready.is_set() and self.main_ready,
+                    'main_error':self.main_error,'main_thread': MAIN,
                     'model': MODEL, 'effort': EFFORT, 'service_tier': TIER,
                     'connection_error': self.rpc.connection_error})
                 if path == '/tasks': return web.json_response({'tasks': list(self.tasks.values())})

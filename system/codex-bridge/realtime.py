@@ -12,6 +12,12 @@ from pathlib import Path
 from aiohttp import web
 from milestones import Milestones, enabled_by_policy
 from configuration import SETTINGS
+from configuration import local_bridge_url
+import shlex
+import sys
+
+CONVERSATIONS=shlex.join([sys.executable,str(Path(__file__).resolve().parents[2]/'client/codex-conversations'),
+                         '--url',local_bridge_url(SETTINGS)])
 
 QUIET = Path(SETTINGS['state_dir'])/'quiet-until'
 
@@ -116,10 +122,11 @@ class Realtime:
                     'backendReasoningStatus': False,
                     'realtimeStartInstructions': (
                         '当前为贾维斯的实时语音模式，仍在原根目录主对话工作，遵循既有AGENTS.md。'
-                        '简单任务直接完成；已有项目工作用codex-conversations查找并引导对应对话，避免重复任务。'
+                        '简单任务直接完成；已有项目工作用以下 CLI 查找并引导对应对话，避免重复任务。'
+                        '对话 CLI 命令前缀：'+CONVERSATIONS+'。'
                         '及时简短汇报经过核实的进展。用户纠正时及时改变路线。'
                         '当前回复由原生实时语音呈现，不额外调用小度播报。'
-                        '用户要求结束语音、挂断、休息或明确告别时，执行codex-conversations voice-end；'
+                        '用户要求结束语音、挂断、休息或明确告别时，执行 '+CONVERSATIONS+' voice-end；'
                         '这只结束音频连接，不取消已经委派的后台任务。'
                     ),
                     'realtimeEndInstructions': (

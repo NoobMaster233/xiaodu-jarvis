@@ -3,9 +3,13 @@
 import argparse
 import http.client
 import json
+import os
+from pathlib import Path
+from urllib.parse import urlsplit
 import sys
 
 p=argparse.ArgumentParser(description=__doc__)
+p.add_argument('--url',help='覆盖桥接 URL；也可设置 CODEX_BRIDGE_URL')
 s=p.add_subparsers(dest='command',required=True)
 q=s.add_parser('list');q.add_argument('--search')
 q=s.add_parser('read');q.add_argument('thread')
@@ -29,7 +33,15 @@ elif a.command=='voice-end':method='POST';path='/v1/realtime/end';body={}
 elif a.command=='voice-status':path='/v1/realtime/status'
 else:path='/'+a.command
 try:
- c=http.client.HTTPConnection('127.0.0.1',8766,timeout=45)
+ url=a.url or os.environ.get('CODEX_BRIDGE_URL')
+ if not url:
+  config=Path(os.environ.get('XIAODU_CONFIG',str(Path.home()/'.config/xiaodu-jarvis/config.json'))).expanduser()
+  value=json.loads(config.read_text()) if config.is_file() else {}
+  host={'0.0.0.0':'127.0.0.1','::':'::1'}.get(value.get('listen_host'),value.get('listen_host','127.0.0.1'))
+  url='http://'+('['+host+']' if ':' in host else host)+':'+str(value.get('listen_port',8766))
+ address=urlsplit(url)
+ if address.scheme!='http' or not address.hostname or address.username or address.password or address.path not in ('','/') or address.query or address.fragment:raise ValueError('invalid_bridge_url')
+ c=http.client.HTTPConnection(address.hostname,address.port or 80,timeout=45)
  c.request(method,path,None if body is None else json.dumps(body,ensure_ascii=False).encode(),{'Content-Type':'application/json'})
  r=c.getresponse();result=json.loads(r.read());c.close()
  print(json.dumps(result,ensure_ascii=False,indent=2))

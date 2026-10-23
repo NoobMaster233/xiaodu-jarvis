@@ -24,6 +24,7 @@ def main():
     with zipfile.ZipFile(jar,'w',compression=zipfile.ZIP_DEFLATED) as z:z.write(BUILD/'dex/classes.dex','classes.dex')
     proof={'jar':str(jar.relative_to(ROOT)),'bytes':jar.stat().st_size,'sha256':hashlib.sha256(jar.read_bytes()).hexdigest(),'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest()}
     proof['source_hashes']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+    proof['build_script_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     (BUILD/'build-proof.json').write_text(json.dumps(proof,indent=2)+'\n');print(json.dumps(proof))
 
 if __name__=='__main__':main()

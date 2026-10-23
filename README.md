@@ -4,9 +4,9 @@
 
 这套代码已经在作者自有设备上用于日常对话：本地检测唤醒词，屏幕显示动态光球，通过 WebRTC 与 Codex 的实时语音连接；仍沿用自己的主对话，工具任务可以由它处理或分配给已有项目对话。挂断后释放通话麦克风，回到等待唤醒。
 
-**公开版首次发布：v0.1.0。** [下载工具包与 APK](https://github.com/NoobMaster233/xiaodu-jarvis/releases/tag/v0.1.0) · [从这里开始安装](docs/quickstart.md)
+**当前公开版：v0.1.1。** [下载工具包与 APK](https://github.com/NoobMaster233/xiaodu-jarvis/releases/tag/v0.1.1) · [从这里开始安装](docs/quickstart.md)
 
-> 适配机型是 **小度智能屏 1S，XDH-29-B1 / MT8167 / Android 8.1 / ARMv7**，不是“小度在家 1S”。设备需要已经取得 root 和 Magisk；[解锁与 root 教程](https://github.com/NoobMaster233/xiaodu-smart-screen-1s-root)是单独的前置项目。
+> 适配机型是 **小度智能屏 1S，XDH-29-B1 / MT8167 / Android 8.1 / ARMv7**，不是“小度在家 1S”。设备需要已经取得 root 和 Magisk，并保留 DCS 6.0.15.0 / 60000 的已核验宿主；[解锁与 root 教程](https://github.com/NoobMaster233/xiaodu-smart-screen-1s-root)是单独的前置项目。
 >
 > Codex 的 `thread/realtime/*` 是 **experimental 接口**，不是稳定的通用 Realtime API。需要现有 Codex 登录、支持相应功能的账号和本机 app-server；未来版本可能变化。首次发布的完整构建与安装工具面向 Linux，不承诺 Windows 一键安装。
 
@@ -24,17 +24,34 @@
 ## 一张图看懂
 
 ```mermaid
-flowchart LR
-  U[用户] -->|真维斯| K[小度本地 KWS]
-  K --> A[语音 APK：双音与光球]
-  A <-->|HTTP 信令| B[Linux 桥接程序]
-  B <-->|本机 Unix Socket| C[已有 Codex 主对话]
-  A <-->|WebRTC 双向音频| R[Codex 实时语音服务]
-  R <--> C
-  C -->|工具与任务| P[已有项目对话 / 本机工具]
-  P --> C
-  C -->|CLI → 局域网 HTTP| D[小度音量 / 屏幕 / 播放控制]
+flowchart TB
+  U[用户]
+  subgraph DEVICE[小度智能屏 1S]
+    K[本地唤醒词检测]
+    A[语音 APK：双音、光球、麦克风]
+    K --> A
+  end
+  subgraph HOST[Linux 管理机]
+    B[Python 桥接：8766]
+    C[Codex app-server：同一个主对话]
+    P[本机工具与已有项目对话]
+    B <-->|本机 Unix Socket| C
+    C <--> P
+  end
+  subgraph CLOUD[OpenAI 云端]
+    R[实时语音模型]
+    E[后台任务模型]
+  end
+  U -->|真维斯| K
+  A <-->|HTTP 信令| B
+  A <-->|WebRTC 双向音频| R
+  C <-->|实时会话控制与事件| R
+  C <-->|任务推理| E
 ```
+
+图中三个框分别是设备、你的电脑和云端。“信令”是建立/结束通话用的控制消息，“WebRTC”承载声音。
+
+设备控制另走“Codex 工具 → xiaodu CLI → 小度 HTTP 8765”，不用经过实时音频链路。
 
 音频由 libwebrtc 传输，Python 桥接负责会话和信令，不把实时音频转成一条条 HTTP TTS。普通 `xiaodu say` 仍可独立使用；实时通话期间避免重复播报。
 
@@ -49,6 +66,8 @@ flowchart LR
 
 | 文档 | 内容 |
 |---|---|
+| [Codex 环境准备](docs/codex-setup.md) | 启动已有/独立 app-server、取得主对话 ID、核对审批条件 |
+| [维护手册](docs/maintenance.md) | 健康检查、日志、首次安装失败、升级与永久停用 |
 | [架构与启动时序](docs/architecture.md) | 哪些在设备上，哪些在管理机上；并行启动和麦克风交接 |
 | [快速开始](docs/quickstart.md) | 配置、依赖、首次安装、服务启动和日常入口 |
 | [从源码构建](docs/build.md) | 固定版本依赖、签名、输出与工具包 |

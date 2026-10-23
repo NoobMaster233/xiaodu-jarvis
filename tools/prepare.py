@@ -29,6 +29,15 @@ def checked_path(base, name):
     return path
 
 
+def cached_match(base,names,expected):
+    if base:
+        for name in names:
+            if not name:continue
+            path=checked_path(base,name)
+            if path.is_file() and digest(path)==expected:return path
+    return None
+
+
 def extract(archive, kind, member, target):
     """只打开清单指定的普通文件，不调用 extractall，不接受归档链接。"""
     with tempfile.TemporaryDirectory(dir=target.parent) as folder:
@@ -63,15 +72,15 @@ def prepare(group, cache_from=None):
         for item in entry['outputs']:
             target = checked_path(CACHE, item['path']); target.parent.mkdir(parents=True, exist_ok=True)
             if target.is_file() and digest(target) == item['sha256']: continue
-            cached = checked_path(cache_from, item['cached']) if cache_from else None
-            if cached and cached.is_file() and digest(cached) == item['sha256']:
+            cached=cached_match(cache_from,['.cache/'+item['path'],item['path'],item['cached']],item['sha256'])
+            if cached:
                 shutil.copyfile(cached, target)
             else: pending.append((item, target))
         if pending:
             downloads = CACHE/'downloads'; downloads.mkdir(parents=True, exist_ok=True)
             archive = downloads/entry['sha256']
-            cached = checked_path(cache_from, entry['cached']) if cache_from and entry['cached'] else None
-            if cached and cached.is_file() and digest(cached) == entry['sha256']:
+            cached=cached_match(cache_from,['.cache/downloads/'+entry['sha256'],'downloads/'+entry['sha256'],entry['cached']],entry['sha256'])
+            if cached:
                 shutil.copyfile(cached, archive)
             if not archive.is_file() or digest(archive) != entry['sha256']:
                 print('下载：'+entry['name'], flush=True)

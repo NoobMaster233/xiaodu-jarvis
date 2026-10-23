@@ -7,6 +7,7 @@ import stat
 import zipfile
 from check_public import ROOT, check
 from prepare import digest
+from artifacts import validate_build
 
 
 def release():
@@ -17,13 +18,13 @@ def release():
     outputs=[]
     for directory,field in (('voice-client','apk'),('screen-care','apk'),('speech-http','jar')):
         proof_path=ROOT/'artifacts'/directory/'build-proof.json'
-        proof=json.loads(proof_path.read_text());file=ROOT/proof[field]
-        if digest(file)!=proof['sha256']:raise ValueError('构建产物 SHA256 不匹配')
+        proof,file=validate_build(directory)
         payload[str(file.relative_to(ROOT))]=file
         payload[str(proof_path.relative_to(ROOT))]=proof_path
         if field=='apk':
             target=result/file.name;shutil.copyfile(file,target);outputs.append(target)
-    bundle=result/'xiaodu-jarvis-v0.1.0.zip'
+    version=(ROOT/'VERSION').read_text().strip()
+    bundle=result/('xiaodu-jarvis-v'+version+'.zip')
     with zipfile.ZipFile(bundle,'w',compression=zipfile.ZIP_DEFLATED) as z:
         for name,path in sorted(payload.items()):
             item=zipfile.ZipInfo('xiaodu-jarvis/'+name,(2026,1,1,0,0,0));item.create_system=3

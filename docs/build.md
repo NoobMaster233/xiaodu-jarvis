@@ -72,4 +72,6 @@ python3 -m compileall -q system/codex-bridge tools scripts client
 python3 tools/release.py
 ```
 
+发布前会强制核对源码文件集合、内容、构建脚本与产物的 SHA256；修改过源码却没重建会拒绝打包。版本号读取根目录 `VERSION`。
+
 只打包明确允许的公开源码、文档、Skill、两个 APK 和服务 JAR，不包含缓存、模型、Frida 二进制、签名私钥、个人配置或状态。第三方运行依赖仍在使用者本机下载校验。输出在忽略的 `artifacts/release/`，同时生成 `SHA256SUMS`。
