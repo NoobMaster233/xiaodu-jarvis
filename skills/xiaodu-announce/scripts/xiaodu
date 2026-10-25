@@ -4,6 +4,7 @@
 复制本文件即可使用。通过 --url 或 XIAODU_URL 指定你自己的设备地址，无需凭据。
 """
 import argparse
+from datetime import datetime
 import http.client
 import json
 import os
@@ -11,17 +12,38 @@ from pathlib import Path
 import re
 import ssl
 import sys
+import tempfile
 import time
 from urllib.parse import urlsplit
 import uuid
 
 TERMINAL={'completed','stopped','failed','expired','unconfirmed'}
 DEFAULT_URL=''
+MEDIA_PACKAGES={'netease':'com.netease.cloudmusic.tv','bilibili':'com.bilibili.bilithings','vlc':'org.videolan.vlc','bluetooth':'com.android.bluetooth'}
+
+def jpeg_dimensions(raw):
+    if not raw.startswith(b'\xff\xd8') or not raw.endswith(b'\xff\xd9'):raise RuntimeError('Device returned an invalid JPEG')
+    offset=2
+    while offset+4<=len(raw):
+        if raw[offset]!=255:raise RuntimeError('Invalid JPEG marker')
+        while offset<len(raw) and raw[offset]==255:offset+=1
+        marker=raw[offset];offset+=1
+        if marker in {1,0xd8,0xd9} or 0xd0<=marker<=0xd7:continue
+        length=int.from_bytes(raw[offset:offset+2],'big')
+        if length<2 or offset+length>len(raw):raise RuntimeError('Invalid JPEG segment')
+        if marker in {0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf}:
+            if length<8:raise RuntimeError('Invalid JPEG frame')
+            height=int.from_bytes(raw[offset+3:offset+5],'big');width=int.from_bytes(raw[offset+5:offset+7],'big')
+            if not 1<=width<=4096 or not 1<=height<=4096:raise RuntimeError('Invalid photo dimensions')
+            return width,height
+        if marker==0xda:break
+        offset+=length
+    raise RuntimeError('JPEG dimensions missing')
 
 class Client:
     def __init__(self,args):
         self.url=args.url or os.environ.get('XIAODU_URL') or DEFAULT_URL
-        if not self.url:raise RuntimeError('请通过 --url 或 XIAODU_URL 指定自己的设备地址')
+        if not self.url:raise RuntimeError('Set --url or XIAODU_URL to your device address')
         self.address=urlsplit(self.url)
         if self.address.scheme not in {'http','https'} or not self.address.hostname or self.address.username or self.address.path not in {'','/'} or self.address.query or self.address.fragment:
             raise RuntimeError('Use a device http(s)://host:port URL without credentials or a path')
@@ -32,18 +54,21 @@ class Client:
         if body is not None:
             payload=json.dumps(body,ensure_ascii=False).encode('utf-8');headers['Content-Type']='application/json'
         cls=http.client.HTTPSConnection if self.address.scheme=='https' else http.client.HTTPConnection
-        kwargs={'timeout':15}
+        kwargs={'timeout':20 if binary=='jpeg' else 15}
         if cls is http.client.HTTPSConnection:kwargs['context']=ssl.create_default_context()
         conn=cls(self.address.hostname,self.address.port,**kwargs)
         try:
             conn.request(method,path,payload,headers);response=conn.getresponse();limit=3*1024*1024 if binary else 65536;raw=response.read(limit+1)
             if len(raw)>limit:raise RuntimeError('Invalid HTTP reply size')
             if binary and response.status<300:
-                if response.getheader('Content-Type')!='image/png' or not raw.startswith(b'\x89PNG\r\n\x1a\n'):raise RuntimeError('Device returned an invalid screenshot')
+                if binary=='jpeg':
+                    if response.getheader('Content-Type')!='image/jpeg':raise RuntimeError('Device returned an invalid photo type')
+                    jpeg_dimensions(raw)
+                elif response.getheader('Content-Type')!='image/png' or not raw.startswith(b'\x89PNG\r\n\x1a\n'):raise RuntimeError('Device returned an invalid screenshot')
                 return raw
             try:result=json.loads(raw)
             except ValueError:raise RuntimeError('Device returned invalid JSON') from None
-            if response.status>=400:
+            if response.status>=300:
                 code=result.get('error','request_failed')
                 if not isinstance(code,str) or not re.fullmatch('[a-z_]{1,80}',code):code='request_failed'
                 raise RuntimeError('HTTP '+str(response.status)+': '+code)
@@ -71,15 +96,30 @@ def main():
     status=sub.add_parser('status');status.add_argument('--id')
     stop=sub.add_parser('stop');stop.add_argument('--id')
     sub.add_parser('health',help='Check the device HTTP service and speech readiness')
-    volume=sub.add_parser('volume',help='Read or adjust media volume, in percent')
+    volume=sub.add_parser('volume',help='Read or adjust current media/alarm volume, in percent')
+    volume.add_argument('--stream',choices=['media','alarm'],default='media')
     volume.add_argument('value',nargs='?',type=int)
     volume.add_argument('--delta',type=int)
     mute=volume.add_mutually_exclusive_group();mute.add_argument('--mute',action='store_true');mute.add_argument('--unmute',action='store_true')
     brightness=sub.add_parser('brightness',help='Read or adjust screen brightness, 1..100 percent')
     brightness.add_argument('value',nargs='?',type=int);brightness.add_argument('--delta',type=int)
+    bluetooth=sub.add_parser('bluetooth',help='Read Bluetooth state, turn it on/off, or enable pairing visibility')
+    bluetooth.add_argument('action',nargs='?',default='status',choices=['status','on','off','pair'])
+    alarm=sub.add_parser('alarm',help='List, create a one-shot alarm, or delete an alarm by ID')
+    alarm.add_argument('action',nargs='?',default='list',choices=['list','add','delete','stop'])
+    alarm.add_argument('id',nargs='?')
+    alarm_time=alarm.add_mutually_exclusive_group()
+    alarm_time.add_argument('--after',type=int,help='Minutes from now, 1..525600')
+    alarm_time.add_argument('--at',help='ISO8601 time including timezone, e.g. 2026-10-25T08:00:00+08:00')
+    timer=sub.add_parser('timer',help='List, add or cancel a one-shot factory countdown')
+    timer.add_argument('action',nargs='?',default='list',choices=['list','add','delete'])
+    timer.add_argument('id',nargs='?')
+    duration=timer.add_mutually_exclusive_group()
+    duration.add_argument('--after',type=int,help='Countdown minutes, 1..1440')
+    duration.add_argument('--seconds',type=int,help='Countdown seconds, 1..86400')
     media=sub.add_parser('media',help='Control an active player and read its response')
     media.add_argument('action',nargs='?',default='status',choices=['status','play','pause','toggle','next','previous','stop'])
-    media.add_argument('--app',choices=['netease','bilibili','vlc'])
+    media.add_argument('--app',choices=MEDIA_PACKAGES,help='Filter status or target a media action by application')
     screen=sub.add_parser('screen',help='Read display state, wake, sleep, show clock or home')
     screen.add_argument('action',nargs='?',default='status',choices=['status','on','off','clock','home'])
     app=sub.add_parser('app',help='List apps, inspect foreground app, open one, or navigate')
@@ -90,9 +130,15 @@ def main():
     voice.add_argument('action',nargs='?',default='status',choices=['status','end'])
     screenshot=sub.add_parser('screenshot',help='Save one screenshot as a PNG')
     screenshot.add_argument('path',nargs='?',type=Path)
+    photo=sub.add_parser('photo',help='Take one camera photo, release the camera and save a private JPEG')
+    photo.add_argument('path',nargs='?',type=Path)
+    camera=sub.add_parser('camera',help='Enable or disable the single front camera; no photo is taken')
+    camera.add_argument('action',choices=['on','off'])
+    notice=sub.add_parser('notify',help='Show a silent text card, or clear only this CLI\'s card')
+    notice.add_argument('text',nargs='?');notice.add_argument('--title');notice.add_argument('--clear',action='store_true')
     args=parser.parse_args()
     try:
-        if getattr(args,'id',None) is not None and not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',args.id):
+        if args.command in {'say','status','stop'} and getattr(args,'id',None) is not None and not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',args.id):
             raise RuntimeError('Invalid request ID')
         client=Client(args)
         if args.command=='say':
@@ -117,11 +163,51 @@ def main():
                 body['delta']=args.delta
             if args.command=='volume' and (args.mute or args.unmute):body['mute']=args.mute
             if len(body)>1:raise RuntimeError('Choose a value, delta, or mute action')
-            result=client.request('POST' if body else 'GET','/v1/'+args.command,body or None)
+            path='/v1/alarm-volume' if args.command=='volume' and args.stream=='alarm' else '/v1/'+args.command
+            result=client.request('POST' if body else 'GET',path,body or None)
+        elif args.command=='alarm':
+            has_time=args.after is not None or args.at is not None
+            if args.action in {'list','stop'}:
+                if args.id or has_time:raise RuntimeError('alarm list takes no ID or time')
+                result=client.request('GET','/v1/alarms') if args.action=='list' else client.request('POST','/v1/alarms',{'action':'stop'})
+            elif args.action=='delete':
+                if not args.id or len(args.id)>200 or any(ord(c)<32 or ord(c)==127 for c in args.id) or has_time:raise RuntimeError('Use alarm delete ID from alarm list')
+                result=client.request('POST','/v1/alarms',{'action':'delete','id':args.id})
+            else:
+                if args.id or not has_time:raise RuntimeError('Use alarm add --after MINUTES or --at ISO8601')
+                body={'action':'add','id':'xiaodu-'+uuid.uuid4().hex}
+                if args.after is not None:
+                    if not 1<=args.after<=525600:raise RuntimeError('Alarm minutes must be between 1 and 525600')
+                    body['after_minutes']=args.after
+                else:
+                    when=datetime.fromisoformat(args.at.replace('Z','+00:00'))
+                    if when.tzinfo is None or when.utcoffset() is None:raise RuntimeError('Alarm time must include a timezone')
+                    body['at_ms']=int(when.timestamp())*1000
+                result=client.request('POST','/v1/alarms',body)
+        elif args.command=='timer':
+            has_time=args.after is not None or args.seconds is not None
+            if args.action=='list':
+                if args.id or has_time:raise RuntimeError('timer list takes no ID or duration')
+                result=client.request('GET','/v1/timers')
+            elif args.action=='delete':
+                if not args.id or len(args.id)>200 or any(ord(c)<32 or ord(c)==127 for c in args.id) or has_time:raise RuntimeError('Use timer delete ID from timer list')
+                result=client.request('POST','/v1/timers',{'action':'delete','id':args.id})
+            else:
+                if args.id or not has_time:raise RuntimeError('Use timer add --after MINUTES or --seconds SECONDS')
+                seconds=args.seconds if args.seconds is not None else args.after*60
+                if not 1<=seconds<=86400:raise RuntimeError('Countdown must be between 1 and 86400 seconds')
+                result=client.request('POST','/v1/timers',{'action':'add','id':'xiaodu-timer-'+uuid.uuid4().hex,'duration_seconds':seconds})
+        elif args.command=='bluetooth':
+            result=client.request('GET','/v1/bluetooth') if args.action=='status' else client.request('POST','/v1/bluetooth',{'action':args.action})
         elif args.command=='media':
-            body={'action':args.action}
-            if args.app:body['app']=args.app
-            result=client.request('GET','/v1/media') if args.action=='status' else client.request('POST','/v1/media',body)
+            if args.action=='status':
+                result=client.request('GET','/v1/media')
+                if args.app:
+                    result['sessions']=[s for s in result.get('sessions',[]) if s.get('package')==MEDIA_PACKAGES[args.app]]
+            else:
+                body={'action':args.action}
+                if args.app:body['app']=args.app
+                result=client.request('POST','/v1/media',body)
         elif args.command=='screen':result=client.request('GET','/v1/screen') if args.action=='status' else client.request('POST','/v1/screen',{'action':args.action})
         elif args.command in {'app','apps'}:
             action='list' if args.command=='apps' else args.action
@@ -133,6 +219,30 @@ def main():
                 if app_id:body['app']=app_id
                 result=client.request('POST','/v1/app',body)
         elif args.command=='voice':result=client.request('GET','/v1/voice/status') if args.action=='status' else client.request('POST','/v1/voice/end',{})
+        elif args.command=='camera':
+            result=client.request('POST','/v1/camera/power',{'enabled':args.action=='on'})
+        elif args.command=='notify':
+            if args.clear:
+                if args.text is not None or args.title is not None:raise RuntimeError('notify --clear takes no text or title')
+                body={'action':'clear'}
+            else:
+                if not args.text or len(args.text.encode('utf-16-le'))//2>500 or '\x00' in args.text or not args.text.strip():raise RuntimeError('Notice text must contain 1..500 UTF-16 characters without NUL')
+                body={'text':args.text}
+                if args.title is not None:
+                    if not args.title.strip() or len(args.title.encode('utf-16-le'))//2>80 or '\x00' in args.title:raise RuntimeError('Notice title must contain 1..80 UTF-16 characters without NUL')
+                    body['title']=args.title
+            result=client.request('POST','/v1/notice',body)
+        elif args.command=='photo':
+            path=args.path or Path(tempfile.gettempdir())/('xiaodu-photo-'+uuid.uuid4().hex+'.jpg')
+            # Reserve the destination first: an existing path must not trigger a photo.
+            descriptor=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            try:
+                with os.fdopen(descriptor,'wb') as out:
+                    raw=client.request('POST','/v1/camera/photo',{},binary='jpeg');out.write(raw)
+                width,height=jpeg_dimensions(raw)
+            except BaseException:
+                path.unlink(missing_ok=True);raise
+            result={'saved':str(path.resolve()),'width':width,'height':height,'bytes':len(raw)}
         elif args.command=='screenshot':
             raw=client.request('GET','/v1/screenshot',binary=True)
             path=args.path or Path('xiaodu-screen-'+time.strftime('%Y%m%d-%H%M%S')+'.png')

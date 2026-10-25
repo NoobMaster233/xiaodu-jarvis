@@ -44,19 +44,28 @@ class AdbDevice:
         if not name or not code:raise ValueError('缺少可识别的原厂 DCS 语音宿主')
         self.factory={'package':'com.baidu.duershow.dcs','version_name':name[1],'version_code':code[1],
                       'matches_tested_baseline':(name[1],code[1])==('6.0.15.0','60000')}
+        launcher=self.shell('dumpsys package com.baidu.launcher')
+        launcher_name=re.search(r'\bversionName=(\S+)',launcher);launcher_code=re.search(r'\bversionCode=(\d+)',launcher)
+        self.factory['launcher']={'version_name':launcher_name[1] if launcher_name else None,
+                                  'version_code':launcher_code[1] if launcher_code else None}
+        self.factory['launcher_matches_tested_baseline']=bool(launcher_name and launcher_code and
+            (launcher_name[1],launcher_code[1])==('1.68.2','10682'))
     def state(self):
         try:
             value=json.loads(self.root(BB+' wget -q -T 3 -O - http://127.0.0.1:8765/v1/voice/status'))
             return {'state':value.get('state'),'error':value.get('error'),'realtime':value.get('realtime',False),
-                    'samples':value.get('samples'),
+                    'samples':value.get('samples'),'wake_source':value.get('wake_source'),
+                    'factory_wake_phase':value.get('factory_wake_phase'),
                     'wake_ready':value.get('state')=='wake_ready' and not value.get('error')}
         except (ValueError,subprocess.CalledProcessError):
             return {'state':'unavailable','wake_ready':False}
 
 
-def plan(bridge_url,include_clock=True):
+def plan(bridge_url,include_clock=True,wake_source='factory'):
+    if wake_source not in ('factory','local'):raise ValueError('wake_source只能为factory或local')
     return {'model':'XDH-29-B1','bridge_url':validate_url(bridge_url),
             'install':['语音 APK']+(['待机时钟 APK'] if include_clock else [])+['采音与局域网控制模块'],
+            'wake_source':wake_source,'wake_word':'小度小度' if wake_source=='factory' else '真维斯',
             'first_install_only':True,'reboot':False}
 
 
@@ -66,8 +75,8 @@ def inspect(serial):
     return {'prerequisites_valid':True,'module_installed':exists,'factory':device.factory,**device.state()}
 
 
-def install(serial,bridge_url,include_clock=True):
-    expected=plan(bridge_url,include_clock)
+def install(serial,bridge_url,include_clock=True,wake_source='factory'):
+    expected=plan(bridge_url,include_clock,wake_source)
     # Validate all local inputs before any device mutation.
     builds=[validate_build('voice-client')]
     if include_clock:builds.append(validate_build('screen-care'))
@@ -75,6 +84,8 @@ def install(serial,bridge_url,include_clock=True):
     device=AdbDevice(serial);device.prerequisites()
     if not device.factory['matches_tested_baseline']:
         raise ValueError('原厂 DCS 不在已核验基线（6.0.15.0 / 60000）；请先核对厂商私有接口，不自动安装')
+    if not device.factory.get('launcher_matches_tested_baseline'):
+        raise ValueError('原厂launcher不在已核验基线（1.68.2 / 10682）；请先核对厂商私有接口，不自动安装')
     if device.root('test -d '+MODULE+' && echo exists || echo absent')!='absent':
         raise ValueError('发现已有模块：请先 --check，再按维护文档处理；不能覆盖正在运行的服务')
     unique=uuid.uuid4().hex
@@ -115,6 +126,7 @@ def install(serial,bridge_url,include_clock=True):
                     ' && cd '+candidate+' && '+BB+' sha256sum -c SHA256SUMS && chmod 700 service.sh watch.sh frida-inject')
         device.root('test ! -e '+MODULE+' && mv '+candidate+' '+MODULE)
         activated=True
+        device.root('setprop persist.xiaodu.wake_source '+wake_source)
         device.root('sh '+MODULE+'/service.sh')
         if include_clock:device.activity('local.xiaodu.screencare/.ClockActivity')
         deadline=time.monotonic()+45
@@ -122,9 +134,13 @@ def install(serial,bridge_url,include_clock=True):
         while True:
             observed=device.state()
             current_samples=observed.get('samples')
-            if observed.get('wake_ready') and not observed.get('realtime') and type(current_samples) is int:
-                if first_samples is not None and current_samples>first_samples:
-                    result={'installed':True,'wake_ready':True,'capture_advancing':True,'configuration_verified':True,'automatic_test_call':False}
+            if observed.get('wake_ready') and not observed.get('realtime') and observed.get('wake_source')==wake_source:
+                factory_ready=wake_source=='factory' and observed.get('factory_wake_phase')=='ready'
+                local_ready=wake_source=='local' and type(current_samples) is int and first_samples is not None and current_samples>first_samples
+                if factory_ready or local_ready:
+                    result={'installed':True,'wake_ready':True,'wake_source':wake_source,
+                            'factory_wake_phase':observed.get('factory_wake_phase'),
+                            'capture_advancing':local_ready,'configuration_verified':True,'automatic_test_call':False}
                     print(json.dumps(result,ensure_ascii=False));return result
                 first_samples=current_samples
             else:first_samples=None
@@ -147,11 +163,12 @@ if __name__=='__main__':
     parser.add_argument('--bridge-url')
     mode=parser.add_mutually_exclusive_group();mode.add_argument('--apply',action='store_true');mode.add_argument('--check',action='store_true')
     parser.add_argument('--no-clock',action='store_true',help='不安装或修改待机时钟')
+    parser.add_argument('--wake-source',choices=['factory','local'],default='factory',help='默认原厂“小度小度”；local为可选“真维斯”')
     args=parser.parse_args()
     if not args.check and not args.bridge_url:parser.error('计划/安装需要 --bridge-url')
     try:
         if args.check:print(json.dumps(inspect(args.serial),ensure_ascii=False,indent=2))
-        elif args.apply:install(args.serial,args.bridge_url,not args.no_clock)
-        else:print(json.dumps(plan(args.bridge_url,not args.no_clock),ensure_ascii=False,indent=2))
+        elif args.apply:install(args.serial,args.bridge_url,not args.no_clock,args.wake_source)
+        else:print(json.dumps(plan(args.bridge_url,not args.no_clock,args.wake_source),ensure_ascii=False,indent=2))
     except (OSError,ValueError,subprocess.SubprocessError) as exc:
         print('操作未完成：'+str(exc),file=sys.stderr);raise SystemExit(1)

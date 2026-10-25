@@ -14,7 +14,7 @@ import static local.xiaodu.timing.Milestones.Point.*;
 
 /** Local wake detection; releases the microphone to the native realtime client during calls. */
 public final class VoiceRuntime {
-    public interface Control {void factoryWake(boolean enabled);}
+    public interface Control {void factoryWake(boolean enabled,Runnable stopped);}
     private static final Handler main=new Handler(Looper.getMainLooper());
     private static final ArrayDeque<JSONObject> events=new ArrayDeque<>();
     private static final String id=UUID.randomUUID().toString();
@@ -23,15 +23,19 @@ public final class VoiceRuntime {
     private static volatile Control control;
     private static android.content.Context context;
     private static volatile boolean running=false,listening=false,ending=false;
-    private static volatile String state="not_configured",failure=null,partial="";
-    private static long seq=0,asrStarted=0,lastChange=0,lastWake=0;
-    private static volatile long samples=0,wakes=0,finals=0,rawHits=0;
+    private static volatile String state="not_configured",failure=null;
+    private static long seq=0,lastWake=0;
+    private static volatile long samples=0,wakes=0,rawHits=0;
     private static volatile boolean realtime=false;
     private static volatile long realtimeSeen=0;
     private static String callId=null;
     private static JSONObject clientMetrics=new JSONObject();
     private static volatile Milestones timing;
     private static final MicrophoneHandoff microphone=new MicrophoneHandoff();
+    private static final FactoryWakeLifecycle nativeWake=new FactoryWakeLifecycle();
+    private static volatile boolean factorySource=false;
+    private static volatile long factoryHits=0,factoryReadyCount=0;
+    private static Object factoryObserver;
     private static KeywordSpotter kws;
     private static long model=0,stream=0;
 
@@ -41,10 +45,45 @@ public final class VoiceRuntime {
         Thread t=new Thread(VoiceRuntime::capture,"zhenweisi-local-wake");t.setDaemon(true);t.start();
         main.postDelayed(VoiceRuntime::tick,250);
     }
-    private static synchronized void emit(String kind,String text) {
+    public static synchronized void configureFactory(Control c,android.content.Context ctx,Object sdk) throws Exception {
+        if(running)return;
+        control=c;context=ctx.getApplicationContext();factorySource=true;state="wake_starting";
+        factoryObserver=FactoryWakeEvents.attach(sdk,()->main.post(()->{
+            if(nativeWake.ready()&&!microphone.clientOwns()){factoryReadyCount++;state="wake_ready";failure=null;}
+        }),()->main.post(()->{if(!listening){failure="factory_wake_failed";state="failed";}}));
+        running=true;
+        main.post(()->{microphone.reserveKws();pauseFactory();});
+        main.postDelayed(VoiceRuntime::tick,250);
+    }
+    public static boolean usesFactoryWake(){return factorySource;}
+    public static void factoryWakeDetected(){if(factorySource&&running){factoryHits++;wake();}}
+    private static void pauseFactory() {
+        if(!factorySource)return;
+        final long token=nativeWake.requestStop();if(token==0)return;
+        final Milestones t=timing;
+        if(t!=null)t.mark(FACTORY_WAKE_STOP_BEGIN);
         try {
-            JSONObject e=new JSONObject().put("seq",++seq).put("kind",kind).put("at_ms",System.currentTimeMillis());
-            if(text!=null)e.put("text",text);
+            control.factoryWake(false,()->main.post(()->{
+                if(!nativeWake.stopped(token))return;
+                if(t!=null)t.mark(FACTORY_WAKE_STOP_ACK);
+                microphone.kwsReleased();resumeFactory();
+            }));
+            main.postDelayed(()->{
+                if(nativeWake.phase()==FactoryWakeLifecycle.Phase.STOPPING&&nativeWake.generation()==token){
+                    failure="factory_wake_stop_timeout";if(!listening)state="failed";
+                }
+            },3000);
+        }catch(Exception failed){failure="factory_wake_stop_failed";if(!listening)state="failed";}
+    }
+    private static void resumeFactory() {
+        if(!factorySource||listening||microphone.clientOwns()||!nativeWake.requestStart(microphone.clientOwns()))return;
+        if(!microphone.reserveKws()){failure="factory_wake_reserve_failed";state="failed";return;}
+        state="wake_starting";
+        try{control.factoryWake(true,null);}catch(Exception failed){failure="factory_wake_start_failed";state="failed";}
+    }
+    private static synchronized void emitWake() {
+        try {
+            JSONObject e=new JSONObject().put("seq",++seq).put("kind","wake").put("at_ms",System.currentTimeMillis());
             events.add(e);while(events.size()>32)events.remove();
         }catch(Exception ignored){}
     }
@@ -60,12 +99,16 @@ public final class VoiceRuntime {
     }
     public static synchronized JSONObject status() throws Exception {
         return new JSONObject().put("state",state).put("listening",listening).put("samples",samples)
-            .put("wakes",wakes).put("finals",finals).put("raw_kws_hits",rawHits)
+            .put("wake_source",factorySource?"factory":"local").put("wake_word",factorySource?"小度小度":"真维斯")
+            .put("local_kws_active",running&&!factorySource).put("factory_wake_hits",factoryHits).put("factory_wake_ready_count",factoryReadyCount)
+            .put("factory_wake_phase",factorySource?nativeWake.phase().name().toLowerCase(Locale.ROOT):JSONObject.NULL)
+            .put("release_kind",factorySource?"factory_sdk_stop_ack":"local_audio_record_release")
+            .put("wakes",wakes).put("raw_kws_hits",rawHits)
             .put("wake_paused_for_test",testPaused()).put("kws_max_active_paths",KWS_PATHS)
             .put("kws_threshold",KWS_THRESHOLD).put("kws_score",KWS_SCORE)
             .put("wake_feedback","native_realtime").put("wake_feedback_ms",0)
             .put("realtime",realtime).put("call_id",callId==null?JSONObject.NULL:callId)
-            .put("kws_recorder_reserved",microphone.kwsReserved())
+            .put("wake_source_reserved",microphone.kwsReserved()).put("kws_recorder_reserved",!factorySource&&microphone.kwsReserved())
             .put("client",clientMetrics).put("timing_enabled",Milestones.deviceEnabled()).put("kws_timing",timing==null?JSONObject.NULL:new JSONObject(timing.snapshot()))
             .put("error",failure==null?JSONObject.NULL:failure);
     }
@@ -89,34 +132,41 @@ public final class VoiceRuntime {
                 if(!realtime)HttpSpeechServer.listeningStarted(() -> {});
                 if(!realtime)timing=new Milestones(session,Milestones.deviceEnabled(),SystemClock::elapsedRealtimeNanos);
                 microphone.claim(session);
-                callId=session;realtime=true;listening=true;asrStarted=0;
+                callId=session;realtime=true;listening=true;
                 realtimeSeen=SystemClock.elapsedRealtime();state="realtime_"+phase;
+                pauseFactory();
                 if(metrics!=null)clientMetrics=metrics;
-            } else if(callId==null || callId.equals(session)) {
+            } else if(callId!=null && callId.equals(session)) {
                 finishTiming(Milestones.Outcome.ENDED);
-                realtime=false;listening=false;asrStarted=0;state="wake_ready";callId=null;
+                realtime=false;listening=false;state=factorySource?"wake_starting":"wake_ready";callId=null;
                 if(metrics!=null)clientMetrics=metrics;
                 microphone.release(session);
+                resumeFactory();
             }
     }
     public static void wake() {
         main.post(() -> {
-            if(control==null || testPaused() || listening || SystemClock.elapsedRealtime()-lastWake<1800)return;
+            if(!running||control==null||testPaused()||listening)return;
+            if(factorySource){if(nativeWake.phase()!=FactoryWakeLifecycle.Phase.READY)return;}
+            else if(SystemClock.elapsedRealtime()-lastWake<1800)return;
             long acceptedNs=SystemClock.elapsedRealtimeNanos();
-            lastWake=SystemClock.elapsedRealtime();wakes++;partial="";listening=true;ending=false;
-            asrStarted=0;lastChange=lastWake;failure=null;state="realtime_connecting";emit("wake",null);
+            lastWake=SystemClock.elapsedRealtime();wakes++;listening=true;ending=false;
+            failure=null;state="realtime_connecting";emitWake();
             callId=UUID.randomUUID().toString();
             timing=new Milestones(callId,Milestones.deviceEnabled(),SystemClock::elapsedRealtimeNanos);timing.markAt(KWS_ACCEPTED,acceptedNs);
+            final String session=callId;final Milestones callTiming=timing;
             try{microphone.claim(callId);}catch(Exception busy){listening=false;state="wake_ready";failure="microphone_claim_failed";return;}
             realtime=true;realtimeSeen=lastWake;
+            pauseFactory();
             HttpSpeechServer.listeningStarted(() -> {
+                if(!listening||!session.equals(callId))return;
                 try {
                     android.content.Intent i=new android.content.Intent();
                     i.setClassName("local.xiaodu.voice","local.xiaodu.voice.CallActivity");
                     i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                    i.putExtra("wake",true);i.putExtra("call_id",callId);
-                    i.putExtra("timing_kws_accepted_ns",timing.get(KWS_ACCEPTED));context.startActivity(i);
-                }catch(Exception failed){finishTiming(Milestones.Outcome.FAILED);realtime=false;listening=false;state="wake_ready";failure="voice_client_unavailable";microphone.release(callId);}
+                    i.putExtra("wake",true);i.putExtra("call_id",session);
+                    i.putExtra("timing_kws_accepted_ns",callTiming.get(KWS_ACCEPTED));context.startActivity(i);
+                }catch(Exception failed){finishTiming(Milestones.Outcome.FAILED);realtime=false;listening=false;state="wake_ready";failure="voice_client_unavailable";microphone.release(callId);resumeFactory();}
             });
         });
     }
@@ -126,6 +176,7 @@ public final class VoiceRuntime {
         if(realtime && now-realtimeSeen>("realtime_connecting".equals(state)?45000:15000)) {
             finishTiming(Milestones.Outcome.FAILED);
             realtime=false;listening=false;state="wake_ready";microphone.release(callId);callId=null;failure="voice_client_disconnected";
+            resumeFactory();
         }
         main.postDelayed(VoiceRuntime::tick,250);
     }
@@ -147,7 +198,7 @@ public final class VoiceRuntime {
             int size=Math.max(16000,AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT));
             // The factory manifest lacks WAKE_LOCK. The existing root watcher owns
             // a named kernel suspend blocker while this runtime is healthy.
-            main.post(() -> {try{control.factoryWake(false);}catch(Exception failed){failure="factory_wake_stop_failed";}});
+            main.post(() -> {try{control.factoryWake(false,null);}catch(Exception failed){failure="factory_wake_stop_failed";}});
             state="wake_ready";
             short[] pcm=new short[1600];OnlineStream input=new OnlineStream(stream);
             while(running) {
@@ -179,7 +230,7 @@ public final class VoiceRuntime {
             running=false;
             if(recorder!=null){try{recorder.stop();}catch(Exception ignored){}recorder.release();}
             microphone.kwsReleased();
-            main.post(() -> {try{if(control!=null)control.factoryWake(true);}catch(Exception ignored){}});
+            main.post(() -> {try{if(control!=null)control.factoryWake(true,null);}catch(Exception ignored){}});
             if(stream!=0)new OnlineStream(stream).delete(stream);
             if(model!=0 && kws!=null)kws.delete(model);
         }
@@ -188,7 +239,8 @@ public final class VoiceRuntime {
         Milestones t=timing;if(t==null||!t.finish(outcome)||context==null)return;
         try {
             java.io.File file=new java.io.File(context.getFilesDir(),"xiaodu-http/last-kws-timing.json");
-            byte[] data=new JSONObject(t.snapshot()).toString().getBytes("UTF-8");
+            byte[] data=new JSONObject(t.snapshot()).put("wake_source",factorySource?"factory":"local")
+                .put("release_kind",factorySource?"factory_sdk_stop_ack":"local_audio_record_release").toString().getBytes("UTF-8");
             t.store(new java.io.File(context.getFilesDir(),"xiaodu-http/timings"),data);
             try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){out.write(data);}
             file.setReadable(false,false);file.setWritable(false,false);file.setReadable(true,true);file.setWritable(true,true);

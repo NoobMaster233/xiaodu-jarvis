@@ -7,6 +7,7 @@
 | 设备 | 小度智能屏 1S / XDH-29-B1 / MT8167 |
 | 平台 | Android 8.1 / API 27 / armeabi-v7a |
 | 原厂语音宿主 | `com.baidu.duershow.dcs`，versionName **6.0.15.0**，versionCode **60000** |
+| 原厂launcher | `com.baidu.launcher`，**1.68.2 / 10682** |
 | Codex | v3 实验性实时协议；使用过 0.163/0.164 app-server，版本/账号仍需核对 |
 
 DCS 版本来自保留的已验证原厂 APK 元数据，没有把该 APK 上传。仅有相同机型/API 不代表厂商私有类和字段一定相同；首次安装脚本对其他 DCS 版本停止。适配者需要另外核对 loader/合成接口，不能靠强行改一个版本字符串就宣称兼容。
@@ -15,7 +16,7 @@ DCS 版本来自保留的已验证原厂 APK 元数据，没有把该 APK 上传
 python3 tools/device.py --serial 你的SERIAL --check
 ```
 
-会检查型号/API/ABI/root/Magisk，返回 DCS 版本、模块是否存在，以及当前 `wake_ready/state/error/samples`。首次安装成功还会确认两次采音计数递增，不把刚进入 wake_ready 的瞬间当成已采音。只读取，不安装、不挂断、不播报、不开始新通话。设备尚未装模块时 `state=unavailable` 是正常的。
+会检查型号/API/ABI/root/Magisk，返回DCS/launcher版本、模块是否存在，以及当前 `wake_ready/state/error/samples`。默认factory模式核对原厂phase=ready，不要求本地samples递增；local模式才确认两次采音计数递增。只读取，不安装、不挂断、不播报、不开始新通话。设备尚未装模块时 `state=unavailable` 是正常的。
 
 原始版本可手工读取：
 
@@ -33,7 +34,7 @@ adb -s 你的SERIAL shell dumpsys package com.baidu.duershow.dcs
 - `main_ready=true` 和总 `ready=true`：所填主对话已正常恢复；不代表云端通话权限通过。
 - 设备 `wake_ready`：本地唤醒运行中；仍需本人口令测试，不能当作唤醒准确率。
 
-`xiaodu health` 只确认设备 HTTP/引擎，不单独证明 KWS 工作。当前 KWS 若遇到 `mic_unavailable` 或 `mic_read_failed` 退出，watcher 只看 HTTP 存活不会自动重建采音；这是一项已知限制。先排除其他应用占麦、结束当前通话，再按下文维护重载宿主，不要盲目叠加新的录音进程或重复注入。
+`xiaodu health` 只确认设备 HTTP/引擎，不单独证明 KWS 工作。可选local模式若遇到 `mic_unavailable` 或 `mic_read_failed` 退出，watcher 只看 HTTP 存活不会自动重建采音；这是一项已知限制。先排除其他应用占麦、结束当前通话，再按下文维护重载宿主，不要盲目叠加新的录音进程或重复注入。
 
 ## 首次安装中断后怎么继续
 
@@ -116,3 +117,37 @@ adb -s 你的SERIAL reboot
 5. 用 gh 发布新的 tag/Release；从发布页重新下载核 SHA256，并确认 GitHub Actions 成功。修复版本保留旧 tag，不静默覆盖旧资产。
 
 上述自动检查不代替新机首次安装或真人声学验收，结果应分别记录。
+
+## 从 v0.1.x 升级到 v0.2.0
+
+这是针对已有本Kit且签名一致的手工定向升级，不是让首次安装器覆盖旧模块。先保存自己的配置、旧代码/模块与签名资料；使用原Release签名时安装同源新版APK，自己编译时仍用自己的旧密钥。版本冲突不要自动卸载/清数据。
+
+1. 用已配置地址的`xiaodu voice end`确认通话结束，再停管理机的用户级桥接服务。保持原厂launcher、DCS账号与激活状态。
+2. 解压新工具包到单独目录，保留旧配置文件，不复制示例JSON覆盖自己的值。运行`python3 tools/prepare.py --group runtime`及`python3 tools/package_module.py`。
+3. 新APK不启动通话，只更新原应用；桥接地址私有文件会保留。
+
+```sh
+adb -s 你的SERIAL install -r artifacts/voice-client/xiaodu-voice-1.7.apk
+adb -s 你的SERIAL push artifacts/xiaodu-speech-module.zip /data/local/tmp/xiaodu-module-v020.zip
+adb -s 你的SERIAL shell "su -c 'mkdir /data/adb/xiaodu-upgrade-v020 && chmod 700 /data/adb/xiaodu-upgrade-v020 && /data/adb/magisk/busybox unzip -q /data/local/tmp/xiaodu-module-v020.zip -d /data/adb/xiaodu-upgrade-v020 && cd /data/adb/xiaodu-upgrade-v020 && /data/adb/magisk/busybox sha256sum -c SHA256SUMS && chmod 700 service.sh watch.sh frida-inject'"
+```
+
+4. 读取watch与DCS的当前PID。将下面占位符换成读取到的数字，不能照抄其他设备的PID。停止watch会清理本模块root控制进程；确认其退出后再替换目录。
+
+```sh
+adb -s 你的SERIAL shell "su -c 'cat /dev/xiaodu-speech-http/watch.pid; pidof com.baidu.duershow.dcs'"
+adb -s 你的SERIAL shell "su -c 'kill WATCH_PID'"
+adb -s 你的SERIAL shell "su -c 'pidof xiaodu-control'"
+```
+
+5. 确认校验成功且没有活动通话/重复watch，备份旧目录并启用新模块。已有同名升级暂存或备份目录时先查明原因，不反复覆盖。此处一次性选factory；坚持本地自定义口令时改为local。
+
+```sh
+adb -s 你的SERIAL shell "su -c 'test ! -e /data/adb/xiaodu-backup-v01 && mv /data/adb/modules/xiaodu_speech_http /data/adb/xiaodu-backup-v01 && mv /data/adb/xiaodu-upgrade-v020 /data/adb/modules/xiaodu_speech_http'"
+adb -s 你的SERIAL shell "su -c 'setprop persist.xiaodu.wake_source factory && kill DCS_PID && sh /data/adb/modules/xiaodu_speech_http/service.sh'"
+python3 tools/device.py --serial 你的SERIAL --check
+```
+
+6. 把用户服务WorkingDirectory/ExecStart指向新目录，保留原配置，启动一份桥接。更新各Agent安装的Skill/CLI，合并新版AGENTS示例；用health和默认“小度小度”完成本人验收。无需重新安装时钟或重启整机。
+
+升级步骤没有为发布在另一台新机完整实操；源码/包/隔离ADB测试不替代现场检查。失败时保留日志、旧模块与自己的配置，先定位阶段，不重复安装或扩大到刷机。

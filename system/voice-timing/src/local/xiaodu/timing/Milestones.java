@@ -8,6 +8,7 @@ import java.io.*;
 public final class Milestones {
     public enum Point {
         KWS_ACCEPTED, KWS_STOP_BEGIN, KWS_STOP_DONE, KWS_STOP_FAILED, KWS_RELEASE_DONE,
+        FACTORY_WAKE_STOP_BEGIN, FACTORY_WAKE_STOP_ACK,
         ACTIVITY_CREATE, ACTIVITY_NEW_INTENT, SERVICE_CREATE, SERVICE_START,
         CHIME_BEGIN, CHIME_PLAY, CHIME_END, CHIME_RELEASED, CHIME_NOT_COMPLETED,
         STATUS_REQUEST, STATUS_RESPONSE, DEVICE_CLAIM_REQUEST, DEVICE_CLAIM_RESPONSE,
@@ -50,6 +51,7 @@ public final class Milestones {
         duration(durations,"wake_to_service",Point.KWS_ACCEPTED,Point.SERVICE_START);
         duration(durations,"chime",Point.CHIME_BEGIN,Point.CHIME_END);
         duration(durations,"kws_stop_release",Point.KWS_STOP_BEGIN,Point.KWS_RELEASE_DONE);
+        duration(durations,"factory_wake_stop_ack",Point.FACTORY_WAKE_STOP_BEGIN,Point.FACTORY_WAKE_STOP_ACK);
         duration(durations,"handoff_wait",Point.MIC_HANDOFF_WAIT_BEGIN,Point.MIC_HANDOFF_WAIT_END);
         duration(durations,"media_init",Point.MEDIA_INIT_BEGIN,Point.PEER_CREATED);
         duration(durations,"local_sdp_to_offer",Point.LOCAL_SDP_SET,Point.OFFER_REQUEST);

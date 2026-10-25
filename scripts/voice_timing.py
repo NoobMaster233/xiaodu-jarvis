@@ -41,6 +41,8 @@ def sanitize(record):
     if type(record.get('sealed')) is bool:safe['sealed']=record['sealed']
     if record.get('checkpoint') in ('ready','shutdown'):safe['checkpoint']=record['checkpoint']
     safe['downlink_pcm_semantics']='playback_callback_before_render_not_speaker_audibility'
+    if record.get('wake_source') in ('factory','local'):safe['wake_source']=record['wake_source']
+    if record.get('release_kind') in ('factory_sdk_stop_ack','local_audio_record_release'):safe['release_kind']=record['release_kind']
     return safe
 
 

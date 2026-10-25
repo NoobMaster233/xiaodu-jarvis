@@ -30,7 +30,8 @@ class FakeDevice(device.AdbDevice):
     def __init__(self):
         self.events=[];self.module=False;self.fail_unpack=False;self.bad_activity=False;self.bad_state=False;self.samples=0
         self.module_appears_at_lock=False;self.freeze_samples=False
-        self.factory={'matches_tested_baseline':True}
+        self.factory={'matches_tested_baseline':True,'launcher_matches_tested_baseline':True}
+        self.wake_source='factory'
     def prerequisites(self):self.events.append('prerequisites')
     def run(self,args,**kw):self.events.append(tuple(args))
     def shell(self,command):
@@ -41,6 +42,7 @@ class FakeDevice(device.AdbDevice):
         return ''
     def root(self,command):
         self.events.append(command)
+        if command.startswith('setprop persist.xiaodu.wake_source '):self.wake_source=command.rsplit(' ',1)[1]
         if command.startswith('mkdir /data/adb/xiaodu-jarvis-install.lock') and self.module_appears_at_lock:self.module=True
         if command=='test -d '+device.MODULE+' && echo exists || echo absent':return 'exists' if self.module else 'absent'
         if command.startswith('stat -c'):return '10001:10001'
@@ -53,7 +55,7 @@ class FakeDevice(device.AdbDevice):
         return ''
     def state(self):
         if not self.freeze_samples:self.samples+=4000
-        return {'state':'failed','wake_ready':False} if self.bad_state else {'state':'wake_ready','wake_ready':True,'samples':self.samples,'realtime':False}
+        return {'state':'failed','wake_ready':False} if self.bad_state else {'state':'wake_ready','wake_ready':True,'samples':self.samples,'realtime':False,'wake_source':self.wake_source,'factory_wake_phase':'ready' if self.wake_source=='factory' else None}
 
 
 class InstallerTest(unittest.TestCase):
@@ -98,7 +100,17 @@ class InstallerTest(unittest.TestCase):
     def test_ready_without_advancing_capture_is_not_success(self):
         self.d.freeze_samples=True
         with patch.object(device.time,'monotonic',side_effect=[0,100]):
-            with self.assertRaisesRegex(ValueError,'尚未就绪'):self.install()
+            with self.assertRaisesRegex(ValueError,'尚未就绪'):self.install(wake_source='local')
+    def test_factory_ready_does_not_require_sherpa_sample_growth(self):
+        self.d.freeze_samples=True
+        value=self.install()
+        self.assertEqual(value['wake_source'],'factory')
+        self.assertFalse(value['capture_advancing'])
+        self.assertIn('setprop persist.xiaodu.wake_source factory',self.d.events)
+    def test_unverified_launcher_stops_before_device_mutation(self):
+        self.d.factory['launcher_matches_tested_baseline']=False
+        with self.assertRaisesRegex(ValueError,'launcher'):self.install()
+        self.assertEqual(self.d.events,['prerequisites'])
     def test_without_clock_does_not_install_start_or_grant_clock(self):
         self.install(include_clock=False)
         self.assertEqual(len([e for e in self.d.events if isinstance(e,tuple) and e[0]=='install']),1)

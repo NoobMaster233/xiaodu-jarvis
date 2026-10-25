@@ -43,13 +43,13 @@ public final class DeviceControl {
     public static Result request(String operation,JSONObject body) throws Exception {
         JSONObject request=new JSONObject().put("op",operation).put("body",body==null?new JSONObject():body);
         try(LocalSocket s=new LocalSocket()) {
-            s.connect(new LocalSocketAddress(SOCKET,LocalSocketAddress.Namespace.ABSTRACT));s.setSoTimeout(12000);
+            s.connect(new LocalSocketAddress(SOCKET,LocalSocketAddress.Namespace.ABSTRACT));s.setSoTimeout("photo".equals(operation)?16000:12000);
             DataOutputStream out=new DataOutputStream(s.getOutputStream());byte[] bytes=request.toString().getBytes(StandardCharsets.UTF_8);
             out.writeInt(bytes.length);out.write(bytes);out.flush();
             DataInputStream in=new DataInputStream(s.getInputStream());int status=in.readInt(),length=in.readInt();
             if(length<0||length>LIMIT)throw new IOException("control_reply_too_large");
             byte[] data=new byte[length];in.readFully(data);
-            return new Result(status,data,"screenshot".equals(operation)&&status==200?"image/png":"application/json; charset=utf-8");
+            return new Result(status,data,status==200&&"photo".equals(operation)?"image/jpeg":"screenshot".equals(operation)&&status==200?"image/png":"application/json; charset=utf-8");
         }
     }
     private static Result json(int code,JSONObject value){return new Result(code,value.toString().getBytes(StandardCharsets.UTF_8),"application/json; charset=utf-8");}
@@ -74,6 +74,7 @@ public final class DeviceControl {
                     JSONObject r=new JSONObject(new String(data,StandardCharsets.UTF_8));
                     result=operate(r.getString("op"),r.getJSONObject("body"));
                 }catch(Failure e){result=json(e.status,error(e.code));}
+                catch(CameraCapture.Failure e){result=json(e.status,error(e.code));}
                 catch(JSONException|IllegalArgumentException e){result=json(400,error("invalid_arguments"));}
                 catch(Exception e){result=json(503,error("device_operation_failed").put("cause",e.getClass().getSimpleName()));}
                 DataOutputStream out=new DataOutputStream(socket.getOutputStream());
@@ -86,12 +87,17 @@ public final class DeviceControl {
         switch(op) {
             case "status":return json(200,status());
             case "volume":return json(200,volume(body));
+            case "alarm-volume":return json(200,volume(body,AudioManager.STREAM_ALARM));
             case "brightness":return json(200,brightness(body));
             case "media":return json(200,media(body));
+            case "alarms":keys(body,"action","id","at_ms","after_minutes");return alarms(body);
+            case "timers":keys(body,"action","id","duration_seconds");return alarms(new JSONObject(body.toString()).put("kind","TIMER"));
+            case "camera-power":case "notice":return factoryDevice(op,body);
             case "screen":return json(200,screen(body));
             case "apps":return json(200,apps());
             case "app":return json(200,app(body));
             case "screenshot":return new Result(200,command("/system/bin/screencap","-p"),"image/png");
+            case "photo":keys(body);return new Result(200,CameraCapture.photo(context),"image/jpeg");
             case "voice-state":return json(200,new JSONObject().put("active",voiceRunning()));
             case "voice-end":
                 boolean active=voiceRunning();
@@ -109,19 +115,22 @@ public final class DeviceControl {
         return (Integer)n;
     }
     private static JSONObject volume(JSONObject v) throws Exception {
+        return volume(v,AudioManager.STREAM_MUSIC);
+    }
+    private static JSONObject volume(JSONObject v,int stream) throws Exception {
         keys(v,"value","delta","mute");if(v.length()>1)throw new Failure(400,"choose_one_volume_action");
-        int max=audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int max=audio.getStreamMaxVolume(stream);
         Integer requested=null;
         if(v.has("value")||v.has("delta")) {
-            int value=v.has("value")?integer(v,"value",0,100):Math.max(0,Math.min(100,Math.round(audio.getStreamVolume(3)*100f/max)+integer(v,"delta",-100,100)));
-            requested=Math.round(value*max/100f);audio.setStreamVolume(3,requested,0);
+            int value=v.has("value")?integer(v,"value",0,100):Math.max(0,Math.min(100,Math.round(audio.getStreamVolume(stream)*100f/max)+integer(v,"delta",-100,100)));
+            requested=Math.round(value*max/100f);audio.setStreamVolume(stream,requested,0);
         }
         if(v.has("mute")) {
             if(!(v.get("mute") instanceof Boolean))throw new Failure(400,"invalid_mute");
-            audio.adjustStreamVolume(3,v.getBoolean("mute")?AudioManager.ADJUST_MUTE:AudioManager.ADJUST_UNMUTE,0);
+            audio.adjustStreamVolume(stream,v.getBoolean("mute")?AudioManager.ADJUST_MUTE:AudioManager.ADJUST_UNMUTE,0);
         }
-        JSONObject result=new JSONObject().put("value",Math.round(audio.getStreamVolume(3)*100f/max)).put("index",audio.getStreamVolume(3)).put("max",max).put("muted",audio.isStreamMute(3));
-        if(v.length()>0)result.put("verified",requested!=null?requested==audio.getStreamVolume(3):v.getBoolean("mute")==audio.isStreamMute(3));return result;
+        JSONObject result=new JSONObject().put("stream",stream==AudioManager.STREAM_ALARM?"alarm":"media").put("value",Math.round(audio.getStreamVolume(stream)*100f/max)).put("index",audio.getStreamVolume(stream)).put("max",max).put("muted",audio.isStreamMute(stream));
+        if(v.length()>0)result.put("verified",requested!=null?requested==audio.getStreamVolume(stream):v.getBoolean("mute")==audio.isStreamMute(stream));return result;
     }
     private static int fileInt(String path) throws Exception {
         try(BufferedReader r=new BufferedReader(new FileReader(path))){return Integer.parseInt(r.readLine().trim());}
@@ -143,10 +152,24 @@ public final class DeviceControl {
     private static int setting(String name) throws Exception {
         return Integer.parseInt(new String(command("/system/bin/settings","get","system",name),StandardCharsets.UTF_8).trim());
     }
+    private static Result alarms(JSONObject body) throws Exception {
+        return factoryRequest(FactoryAlarmControl.METHOD,body);
+    }
+    private static Result factoryDevice(String operation,JSONObject body) throws Exception {
+        return factoryRequest(FactoryDeviceControl.METHOD,new JSONObject().put("operation",operation).put("body",body));
+    }
+    private static Result factoryRequest(String method,JSONObject body) throws Exception {
+        String text=new String(command("/system/bin/content","call","--uri","content://com.baidu.launcher.setting",
+            "--method",method,"--extra","request:s:"+body.toString()),StandardCharsets.UTF_8);
+        java.util.regex.Matcher match=java.util.regex.Pattern.compile("reply=([A-Za-z0-9+/=]+)").matcher(text);
+        if(!match.find())throw new Failure(503,"alarm_service_unavailable");
+        JSONObject reply=new JSONObject(new String(android.util.Base64.decode(match.group(1),android.util.Base64.DEFAULT),StandardCharsets.UTF_8));
+        return json(reply.getInt("status"),reply.getJSONObject("body"));
+    }
     private static List<MediaController> controllers() throws Exception {
         MediaSessionManager manager=(MediaSessionManager)context.getSystemService(Context.MEDIA_SESSION_SERVICE);
         List<MediaController> list=new ArrayList<>();
-        for(MediaController c:manager.getActiveSessions(null))if(Arrays.asList("com.netease.cloudmusic.tv","com.bilibili.bilithings","org.videolan.vlc").contains(c.getPackageName()))list.add(c);
+        for(MediaController c:manager.getActiveSessions(null))if(Arrays.asList("com.netease.cloudmusic.tv","com.bilibili.bilithings","org.videolan.vlc","com.android.bluetooth").contains(c.getPackageName()))list.add(c);
         return list;
     }
     private static String stateName(PlaybackState s){if(s==null)return "unknown";switch(s.getState()){case 3:return "playing";case 2:return "paused";case 1:return "stopped";case 6:return "buffering";case 7:return "error";default:return "state_"+s.getState();}}
@@ -169,7 +192,7 @@ public final class DeviceControl {
         String action=v.getString("action");long bit;
         switch(action){case "play":bit=4;break;case "pause":bit=2;break;case "toggle":bit=512;break;case "next":bit=32;break;case "previous":bit=16;break;case "stop":bit=1;break;default:throw new Failure(400,"invalid_media_action");}
         MediaController target=null;
-        String selected=v.has("app")?packageFor(v.getString("app")):null;
+        String selected=v.has("app")?("bluetooth".equals(v.getString("app"))?"com.android.bluetooth":packageFor(v.getString("app"))):null;
         for(MediaController c:list)if(selected==null||selected.equals(c.getPackageName())) {
             if(target==null)target=c;if("playing".equals(stateName(c.getPlaybackState()))){target=c;break;}
         }

@@ -15,7 +15,7 @@ def package():
         if entry['name'] not in {'frida','sherpa','model'}: continue
         for item in entry['outputs']:
             if digest(CACHE/item['path']) != item['sha256']: raise ValueError('运行依赖校验失败')
-    files = {name:ROOT/'system/speech-http'/name for name in ('module.prop','service.sh','watch.sh','loader.js')}
+    files = {name:ROOT/'system/speech-http'/name for name in ('module.prop','service.sh','watch.sh','loader.js','alarm-loader.js')}
     files['speech-http.jar'] = jar
     for entry in json.loads(MANIFEST.read_text()):
         if entry['name'] in {'frida','sherpa','model'}:

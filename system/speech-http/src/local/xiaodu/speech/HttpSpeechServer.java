@@ -36,6 +36,7 @@ public final class HttpSpeechServer {
     private final ServerSocket server;
     private final ThreadPoolExecutor requests;
     private Job active;
+    private final java.util.concurrent.atomic.AtomicBoolean cameraBusy=new java.util.concurrent.atomic.AtomicBoolean();
     private final Runnable pumpTask = this::pump;
     private final AudioManager.OnAudioFocusChangeListener focus = change -> {
         if (change == -1 || change == -2) main.post(() -> stopActive("audio_focus_lost"));
@@ -118,7 +119,7 @@ public final class HttpSpeechServer {
             }
             String method=request[0],path=request[1];
             if("GET".equals(method) && "/health".equals(path)) {
-                reply(socket,200,new JSONObject().put("service","xiaodu-speech").put("version","2.3")
+                reply(socket,200,new JSONObject().put("service","xiaodu-speech").put("version","2.11")
                     .put("instance_id",instanceId).put("engine_ready",engineReady()));return;
             }
             if("GET".equals(method) && path.startsWith("/v1/voice/events")) {
@@ -135,6 +136,9 @@ public final class HttpSpeechServer {
             Map<String,String> controls=new HashMap<>();
             controls.put("/v1/device","status");controls.put("/v1/volume","volume");
             controls.put("/v1/brightness","brightness");controls.put("/v1/media","media");
+            controls.put("/v1/bluetooth","bluetooth");
+            controls.put("/v1/alarms","alarms");
+            controls.put("/v1/timers","timers");controls.put("/v1/alarm-volume","alarm-volume");
             controls.put("/v1/screen","screen");controls.put("/v1/apps","apps");
             controls.put("/v1/app","app");controls.put("/v1/screenshot","screenshot");
             if("GET".equals(method) && controls.containsKey(path)) {
@@ -147,6 +151,19 @@ public final class HttpSpeechServer {
             if(length<0 || length>8192){reply(socket,413,error("body_too_large"));return;}
             byte[] body=new byte[length];int offset=0;
             while(offset<length) {int n=in.read(body,offset,length-offset);if(n<0)throw new EOFException();offset+=n;}
+            if("POST".equals(method)&&"/v1/camera/photo".equals(path)){
+                JSONObject value;
+                try{value=new JSONObject(new String(body,StandardCharsets.UTF_8));}
+                catch(Exception bad){reply(socket,400,error("invalid_json"));return;}
+                if(!cameraBusy.compareAndSet(false,true)){reply(socket,409,error("camera_busy"));return;}
+                try{control(socket,"photo",value);}finally{cameraBusy.set(false);}return;
+            }
+            if("POST".equals(method)&&("/v1/camera/power".equals(path)||"/v1/notice".equals(path))) {
+                JSONObject value;
+                try{value=new JSONObject(new String(body,StandardCharsets.UTF_8));}
+                catch(Exception bad){reply(socket,400,error("invalid_json"));return;}
+                control(socket,"/v1/notice".equals(path)?"notice":"camera-power",value);return;
+            }
             if("POST".equals(method) && controls.containsKey(path) && !Arrays.asList("/v1/device","/v1/apps","/v1/screenshot").contains(path)) {
                 JSONObject value;
                 try{value=new JSONObject(new String(body,StandardCharsets.UTF_8));}
@@ -175,7 +192,8 @@ public final class HttpSpeechServer {
                 if(value.getBoolean("active")&&value.optBoolean("await_release",false)) {
                     try {
                         VoiceRuntime.claimAndAwaitRelease(session,value.optString("phase","connecting"),value.optJSONObject("metrics"));
-                        reply(socket,200,new JSONObject().put("accepted",true).put("id",session).put("microphone_released",true));
+                        reply(socket,200,new JSONObject().put("accepted",true).put("id",session).put("microphone_released",true)
+                            .put("release_kind",VoiceRuntime.usesFactoryWake()?"factory_sdk_stop_ack":"local_audio_record_release"));
                     }catch(Exception failed){reply(socket,503,error("microphone_release_unconfirmed"));}
                 } else {
                     VoiceRuntime.realtime(value.getBoolean("active"),session,value.optString("phase","connected"),value.optJSONObject("metrics"));
@@ -212,13 +230,18 @@ public final class HttpSpeechServer {
 
     private void control(Socket socket,String operation,JSONObject body) throws Exception {
         try {
+            // Use the factory application's real package/permission context.
+            if("bluetooth".equals(operation)) {
+                reply(socket,200,BluetoothControl.request(context,body));return;
+            }
             DeviceControl.Result result=DeviceControl.request(operation,body);
             if("status".equals(operation) && result.status==200) {
                 JSONObject value=result.json().put("voice",VoiceRuntime.status());
                 synchronized(lock){value.put("queued",queue.size()).put("active",active==null?JSONObject.NULL:active.json());}
                 reply(socket,200,value);
             }else replyBytes(socket,result.status,result.type,result.data);
-        }catch(Exception failed){reply(socket,503,error("device_control_unavailable"));}
+        }catch(BluetoothControl.Failure failed){reply(socket,failed.status,error(failed.code));}
+        catch(Exception failed){reply(socket,503,error("device_control_unavailable"));}
     }
 
     private void submit(Socket socket,JSONObject value) throws Exception {

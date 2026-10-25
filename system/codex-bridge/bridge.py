@@ -346,12 +346,6 @@ class Bridge:
                     for e in r.get('events', []):
                         self.voice_cursor = e['seq']
                         if e['kind'] == 'wake': await self.silence()
-                        elif e['kind'] == 'final':
-                            try:
-                                result = await self.input(e['text'], 'voice-'+r['instance_id'][:8]+'-'+str(e['seq']))
-                                print(json.dumps({'event': 'voice_delivered', **result}), flush=True)
-                            except Exception as exc:
-                                print(json.dumps({'event': 'voice_delivery_failed', 'error_class': type(exc).__name__}), flush=True)
                     self.voice_cursor = r['cursor']
             except Exception:
                 await asyncio.sleep(2)
@@ -384,7 +378,7 @@ class Bridge:
                 thread, text = body['thread'], body['text']
                 if thread == MAIN: return web.json_response(await self.input(text, body.get('id') or uuid.uuid4().hex))
                 task_id = uuid.uuid4().hex[:16]
-                text = ('[根目录主对话委派]\n'+text+'\n\n本任务由主对话监督和验收。只在当前对话回复，禁止调用小度播报；完成事件会自动回传主对话。不要修改本对话的模型、思考深度或速度设置。')
+                text = ('[根目录主对话委派]\n'+text+'\n\n请在当前对话回复结果，不自行语音播报；结果会自动回传主对话。')
                 r=await self.send(thread,text,'task-'+task_id,worker=True)
                 self.tasks[task_id]={'id':task_id,'thread_id':thread,'turn_id':r['turn_id'],'state':'running','created':int(time.time())}
                 self.save()

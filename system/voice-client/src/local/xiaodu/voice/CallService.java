@@ -17,6 +17,8 @@ import static local.xiaodu.timing.Milestones.Point.*;
 
 /** Media lives in libwebrtc; signaling goes to the owner's existing Codex bridge. */
 public final class CallService extends Service {
+    // Per-track signal gain, before WebRTC mixing/AEC reference and system media volume.
+    private static final double REMOTE_PLAYBACK_GAIN=1.4;
     static volatile boolean active=false,muted=false;
     static volatile String label="准备就绪";
     static volatile float inputLevel=0,outputLevel=0;
@@ -41,6 +43,7 @@ public final class CallService extends Service {
     private volatile boolean ending;
     private boolean wakeChimePlayed=false;
     private volatile float peakInput=0,peakOutput=0;
+    private volatile double remotePlaybackGain=1.0;
     private volatile long playbackFrames=0,captureFrames=0;
     private volatile long lastSpoke=0;
     private long syntheticNext=0,syntheticSamples=0;
@@ -108,11 +111,8 @@ public final class CallService extends Service {
     }
     private void prepare() {
         try {
-            if(ending||startup.isClosed())return;
             if(BRIDGE==null||BRIDGE.isEmpty())throw new IOException("请先在连接设置中填写桥接地址");
-            note(STATUS_REQUEST);JSONObject status=http(BRIDGE,"/v1/realtime/status",null);note(STATUS_RESPONSE);
             if(ending||startup.isClosed())return;
-            if(!diagnostic && status.optDouble("quiet_until",0)>System.currentTimeMillis()/1000.0){worker.execute(() -> finishCall("night_preparation"));return;}
             if(diagnostic&&noMic){File test=new File(getFilesDir(),"diagnostic-input.pcm");if(test.isFile()&&test.length()<=2000000){syntheticAudio=new byte[(int)test.length()];try(DataInputStream in=new DataInputStream(new FileInputStream(test))){in.readFully(syntheticAudio);}}}
             if(ending||startup.isClosed())return;
             note(DEVICE_CLAIM_REQUEST);note(MIC_HANDOFF_WAIT_BEGIN);
@@ -168,7 +168,7 @@ public final class CallService extends Service {
                 public void onRemoveStream(org.webrtc.MediaStream s){}
                 public void onDataChannel(DataChannel c){observe(c);}
                 public void onRenegotiationNeeded(){}
-                public void onAddTrack(RtpReceiver receiver,org.webrtc.MediaStream[] streams){if(receiver.track() instanceof org.webrtc.AudioTrack){org.webrtc.AudioTrack track=(org.webrtc.AudioTrack)receiver.track();worker.execute(() -> {if(!ending){remoteTrack=track;remoteTrack.setEnabled(!silent&&startup.isOpen());}});}}
+                public void onAddTrack(RtpReceiver receiver,org.webrtc.MediaStream[] streams){if(receiver.track() instanceof org.webrtc.AudioTrack){org.webrtc.AudioTrack track=(org.webrtc.AudioTrack)receiver.track();worker.execute(() -> {if(!ending){remoteTrack=track;remoteTrack.setVolume(REMOTE_PLAYBACK_GAIN);remotePlaybackGain=REMOTE_PLAYBACK_GAIN;remoteTrack.setEnabled(!silent&&startup.isOpen());}});}}
             });
             if(peer==null)throw new IOException("peer_unavailable");
             // These SDK controls stop actual audio-device recording/playout, not only RTP mute.
@@ -229,7 +229,7 @@ public final class CallService extends Service {
         }if(active)device(true);}catch(Exception e){error="connection_lost";if(SystemClock.elapsedRealtime()-receivedAt>12000)worker.execute(() -> finishCall("connection_lost"));}finally{if(active&&!ending)main.postDelayed(poll,1000);}});
     }
     private static long number(Object o){return o instanceof Number?((Number)o).longValue():0;}
-    private JSONObject snapshot() throws Exception {return new JSONObject().put("id",id).put("active",active).put("phase",phase).put("no_mic",noMic).put("silent",silent).put("startup_parallel",true).put("media_gate_open",startup.isOpen()).put("software_aec_configured",true).put("wake_chime_played",wakeChimePlayed).put("wake_chime_ms",240).put("peak_input",peakInput).put("peak_output",peakOutput).put("playback_callbacks",playbackFrames).put("input_callbacks",captureFrames).put("bytes_received",bytesIn).put("bytes_sent",bytesOut).put("packets_received",packetsIn).put("packets_sent",packetsOut).put("input_level",inputLevel).put("output_level",outputLevel).put("error",error);}
+    private JSONObject snapshot() throws Exception {return new JSONObject().put("id",id).put("active",active).put("phase",phase).put("no_mic",noMic).put("silent",silent).put("startup_parallel",true).put("media_gate_open",startup.isOpen()).put("software_aec_configured",true).put("remote_playback_gain",remotePlaybackGain).put("wake_chime_played",wakeChimePlayed).put("wake_chime_ms",240).put("peak_input",peakInput).put("peak_output",peakOutput).put("playback_callbacks",playbackFrames).put("input_callbacks",captureFrames).put("bytes_received",bytesIn).put("bytes_sent",bytesOut).put("packets_received",packetsIn).put("packets_sent",packetsOut).put("input_level",inputLevel).put("output_level",outputLevel).put("error",error);}
     private void device(boolean on) throws Exception {http(DEVICE,"/v1/voice/realtime",new JSONObject().put("active",on).put("id",id).put("phase",phase).put("metrics",snapshot()));receivedAt=SystemClock.elapsedRealtime();}
     private void fail(Exception e){if(ending)return;startup.close();error=e.getClass().getSimpleName()+":"+String.valueOf(e.getMessage());worker.execute(() -> finishCall("failed"));}
     private void finishCall(String why) {
@@ -239,7 +239,7 @@ public final class CallService extends Service {
         if(feedbackTask!=null)try{feedbackTask.get(1500,TimeUnit.MILLISECONDS);}catch(Exception ignored){}
         feedback.shutdown();pendingAnswer=null;
         note(CLOSE_BEGIN);
-        label="night_preparation".equals(why)?"语音暂时暂停，请稍后再试":("failed".equals(why)||why.contains("failed")||why.contains("timeout"))?"连接未成功，请稍后再试":"通话已结束";
+        label=("failed".equals(why)||why.contains("failed")||why.contains("timeout"))?"连接未成功，请稍后再试":"通话已结束";
         try{if(peer!=null){peer.close();peer.dispose();peer=null;}if(localTrack!=null){localTrack.dispose();localTrack=null;}if(source!=null){source.dispose();source=null;}if(factory!=null){factory.dispose();factory=null;}if(adm!=null){adm.release();adm=null;}}catch(Exception ignored){}
         if(audioConfigured){audio.abandonAudioFocus(focus);audio.setMode(previousMode);audio.setSpeakerphoneOn(previousSpeaker);}
         if(awake!=null&&awake.isHeld())awake.release();

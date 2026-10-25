@@ -2,7 +2,7 @@
 
 ## Linux 构建环境
 
-Python 3.10+、JDK 17；Debian/Ubuntu 可安装：
+Python 3.10+、JDK 17，运行loader回归需要Node.js 18+；Debian/Ubuntu 可安装：
 
 ```sh
 sudo apt-get install python3 python3-venv openjdk-17-jdk aapt zipalign apksigner adb
@@ -45,7 +45,7 @@ python3 tools/package_module.py
 | 输出 | 内容 |
 |---|---|
 | `artifacts/speech-http/speech-http.jar` | 设备内加载的 dex |
-| `artifacts/voice-client/xiaodu-voice-1.4.apk` | 原生语音客户端 |
+| `artifacts/voice-client/xiaodu-voice-1.7.apk` | 原生语音客户端 |
 | `artifacts/screen-care/screen-care-1.3.apk` | 可选时钟 |
 | `artifacts/xiaodu-speech-module.zip` | 从已校验依赖组装的模块目录包，供首次安装辅助工具使用 |
 | 各目录 `build-proof.json` | 公开源码相对路径、依赖及输出 SHA256 |
@@ -54,7 +54,7 @@ python3 tools/package_module.py
 
 两个 APK 首次构建时分别生成独立签名密钥，留在忽略的 `private/`，权限为 700/600。保管自己的签名密钥用于后续升级，勿提交或发布。Release 中只包含已签名 APK 的公开签名，不包含私钥。自己编译与 Release 的签名不同，不能静默覆盖；安装失败时先明确决定是否卸载，不自动清数据。
 
-关键词由 `examples/keywords.txt` 复制到模块中，默认仍是已测试的“真维斯”。更换词需要正确的音节/token 序列和新的真人正负例验收，不能只改 `@` 后的显示名。
+关键词由 `examples/keywords.txt` 复制到模块中，仅在可选local模式使用已测试的“真维斯”；默认factory模式仍喊“小度小度”。更换词需要正确的音节/token 序列和新的真人正负例验收，不能只改 `@` 后的显示名。
 
 ## 离线检查
 

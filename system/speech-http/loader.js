@@ -14,6 +14,8 @@ Java.perform(function () {
             onMatch(instance){
                 const current=Java.use('com.baidu.duer.dcs.util.StaticUtil').voiceRequest.value;
                 if(current!==null && instance.voiceRequest.value!==null && instance.voiceRequest.value.equals(current)) {
+                    const agent=instance.getWakeupAgent();
+                    if(agent===null||agent.getWakeUp()===null||!agent.isInitSuccess())return;
                     sdk=Java.retain(instance);return 'stop';
                 }
             },
@@ -30,20 +32,38 @@ Java.perform(function () {
 });
 
 function installVoice(sdk,Voice,factory,context) {
-    let factoryWanted=true;
+    const source=String(Java.use('android.os.SystemProperties').get('persist.xiaodu.wake_source','factory'));
+    const nativeMode=source!=='local';
+    let factoryWanted=!nativeMode;
     const SDK=Java.use('com.baidu.duer.dcs.framework.DcsSdkImpl');
     const startWake=SDK.startWakeup.overload();
     startWake.implementation=function(){if(factoryWanted)return startWake.call(this);};
+    const Stop=factory.registerClass({
+        name:'local.xiaodu.speech.FactoryWakeStop',
+        implements:[Java.use('com.baidu.duer.dcs.api.wakeup.IStopWakeupListener')],
+        fields:{callback:'java.lang.Runnable'},
+        methods:{onStopWakeup:function(){const done=this.callback.value;this.callback.value=null;if(done!==null)done.run();}}
+    });
     const Control=factory.registerClass({
         name:'local.xiaodu.speech.FactoryVoiceControl',
         implements:[factory.use('local.xiaodu.speech.VoiceRuntime$Control')],
         methods:{
-            factoryWake:function(enabled){
+            factoryWake:function(enabled,stopped){
                 factoryWanted=!!enabled;
-                if(enabled)startWake.call(sdk);else sdk.stopWakeup(null);
+                if(enabled)startWake.call(sdk);
+                else if(stopped!==null){const listener=Stop.$new();listener.callback.value=stopped;sdk.stopWakeup(listener);}
+                else sdk.stopWakeup(null);
             }
         }
     });
-    Voice.configure(Control.$new(),context);
-    send({kind:'voice_hooks_loaded',local_wake:'真维斯'});
+    if(nativeMode){
+        const wake=Java.use('com.baidu.duer.dcs.link.puffer.wakeup.WakeUpEngine');
+        const params=Java.use('com.baidu.duer.dcs.link.puffer.wakeup.OneshotParam');
+        // Intercept before the agent's warning sound, factory ASR and business/UI.
+        wake.fireOnWakeupSuccess.overload('org.json.JSONObject').implementation=function(statistic){
+            if(String(params.wpWords.value)==='小度小度')Voice.factoryWakeDetected();
+        };
+        Voice.configureFactory(Control.$new(),context,sdk);
+    }else Voice.configure(Control.$new(),context);
+    send({kind:'voice_hooks_loaded',wake_source:nativeMode?'factory':'local',wake_word:nativeMode?'小度小度':'真维斯'});
 }

@@ -65,7 +65,7 @@ def extract(archive, kind, member, target):
 
 
 def prepare(group, cache_from=None):
-    selected = {'frida', 'sherpa', 'model'} if group == 'runtime' else None
+    selected = {'frida', 'sherpa', 'model'} if group == 'runtime' else {'android'} if group == 'android' else None
     for entry in json.loads(MANIFEST.read_text()):
         if selected and entry['name'] not in selected: continue
         pending = []
@@ -113,7 +113,7 @@ def prepare(group, cache_from=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--group', choices=['all', 'runtime'], default='all')
+    parser.add_argument('--group', choices=['all', 'runtime','android'], default='all')
     parser.add_argument('--cache-from', type=Path, help='可选：从已有本地源码缓存复用同 SHA256 的依赖')
     args = parser.parse_args()
     prepare(args.group, args.cache_from)

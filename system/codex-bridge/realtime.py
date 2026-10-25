@@ -7,27 +7,10 @@ import asyncio
 import contextlib
 import time
 import uuid
-from pathlib import Path
 
 from aiohttp import web
 from milestones import Milestones, enabled_by_policy
 from configuration import SETTINGS
-from configuration import local_bridge_url
-import shlex
-import sys
-
-CONVERSATIONS=shlex.join([sys.executable,str(Path(__file__).resolve().parents[2]/'client/codex-conversations'),
-                         '--url',local_bridge_url(SETTINGS)])
-
-QUIET = Path(SETTINGS['state_dir'])/'quiet-until'
-
-
-def quiet_until():
-    try:
-        return float(QUIET.read_text().strip())
-    except (OSError, ValueError):
-        return 0
-
 
 class Realtime:
     def __init__(self, bridge, main):
@@ -42,12 +25,12 @@ class Realtime:
         return bool(self.call and self.call['state'] in ('connecting', 'connected'))
 
     def suppress_tts(self):
-        return self.active() or time.time() < max(self.hold_until, quiet_until())
+        return self.active() or time.time() < self.hold_until
 
     def status(self):
         keys = ('id', 'state', 'reason', 'started', 'connected', 'input_text', 'output_text', 'backend_busy')
         value = {k: self.call[k] for k in keys if self.call and k in self.call}
-        value.update(active=self.active(), main_thread=self.main, quiet_until=quiet_until(),timing_enabled=enabled_by_policy())
+        value.update(active=self.active(), main_thread=self.main, timing_enabled=enabled_by_policy())
         return value
 
     def mark(self, point):
@@ -113,25 +96,19 @@ class Realtime:
                     'threadId': self.main, 'version': 'v3', 'outputModality': 'audio',
                     'realtimeSessionId': call_id, 'voice': SETTINGS['voice'],
                     'initialItems': [{'role': 'developer', 'text': (
-                        '用户刚通过本地唤醒词叫醒贾维斯。媒体连通后请立即用中文简短打招呼，然后等待用户。'
-                        '后续默认中文交流。需要工具的任务以及对正在执行任务的改口、取消，应交给同一对话的Codex处理，'
-                        '不要只口头声称已改变后台任务。用户要求挂断时，让Codex关闭当前语音连接并保留其他后台任务。'
+                        '当前通过小度进行实时语音，使用简洁中文交流。'
+                        '需要工具执行、查询后台进度、修改或取消任务、结束通话时，交给同一主对话的Codex处理，依据实际结果答复。'
+                        '小度支持按需拍摄单张照片；现场视觉问题也交给Codex拍照并看图。'
                     )}],
                     'transport': {'type': 'webrtc', 'sdp': sdp},
                     'codexResponseHandoffMode': 'commentary',
                     'backendReasoningStatus': False,
                     'realtimeStartInstructions': (
-                        '当前为贾维斯的实时语音模式，仍在原根目录主对话工作，遵循既有AGENTS.md。'
-                        '简单任务直接完成；已有项目工作用以下 CLI 查找并引导对应对话，避免重复任务。'
-                        '对话 CLI 命令前缀：'+CONVERSATIONS+'。'
-                        '及时简短汇报经过核实的进展。用户纠正时及时改变路线。'
-                        '当前回复由原生实时语音呈现，不额外调用小度播报。'
-                        '用户要求结束语音、挂断、休息或明确告别时，执行 '+CONVERSATIONS+' voice-end；'
-                        '这只结束音频连接，不取消已经委派的后台任务。'
+                        '本次为小度原生实时语音通话，回复已由实时音频呈现。'
+                        '沿用本主对话的AGENTS.md与对应Skill。'
                     ),
                     'realtimeEndInstructions': (
-                        '本次实时语音已结束，保留原主对话上下文与后台任务。'
-                        '不要为挂断另行发起小度语音通知。'
+                        '本次实时语音已结束，无需播报结束通知。'
                     ),
                 })
                 self.mark('realtime_start_ack')

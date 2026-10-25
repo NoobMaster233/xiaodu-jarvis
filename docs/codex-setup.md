@@ -86,7 +86,7 @@ python3 /你的绝对目录/xiaodu-jarvis/client/codex-conversations --url http:
 
 先替换路径和设备地址，再让**实际主对话的工具环境**各执行一次上述无副作用检查。终端里能运行不代替这一步。
 
-实时通话的启动提示会自动给出本仓库 `codex-conversations` 的绝对命令和配置中的桥接地址，用于挂断与对话操作，避免硬依赖 PATH。主对话要控制音量等设备状态时，仍需由 Skill/规则告诉它小度地址；不要要求它猜 IP。
+实时启动提示只说明当前使用原生语音并沿用主对话规则，不重复维护工具命令。请按[主对话示例](../examples/MAIN_AGENT.md)将CLI绝对路径和地址写入自己的按需工具说明，安装小度Skill，让实际Agent能执行只读health。日常挂断使用设备CLI，管理机voice-end仅作HTTP不可用时的维护兜底。
 
 ## 配置后的验收门槛
 

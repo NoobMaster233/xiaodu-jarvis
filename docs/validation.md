@@ -10,7 +10,7 @@
 
 | 步骤 | 应观察什么 |
 |---|---|
-| `xiaodu health` / `xiaodu voice` | 服务就绪，`wake_ready`、无错误，采音计数增长 |
+| `xiaodu health` / `xiaodu voice` | 服务就绪，`wake_ready`、无错误；factory看原厂phase=ready，local才看采音递增 |
 | 从时钟界面喊默认口令 | 有完整双音，时钟退出，出现光球 |
 | 等待模型问候 | 不只看到动画；实际能听到声音 |
 | 连续说两句话 | 不再需要每句唤醒，能够接续 |
@@ -25,7 +25,7 @@
 
 三端沿用同一个 `call_id`。设备采用 `elapsedRealtimeNanos`，桥接采用独立单调时钟并保留 wall-clock 对照；跨机器不要直接相减墙钟。
 
-设备记录 KWS 接受、stop/release、Activity/Service、提示音、交接、媒体与 SDP/ICE、offer/answer、PC connected、ready，以及首个非零下行 PCM 播放回调。桥接记录 offer、silence/resume、realtime/start、SDP、ready、开场请求。**播放回调发生在 render 之前，不等同扬声器已发声，更不是人耳感知延迟。**
+设备记录 唤醒接受、原厂stop ACK或本地stop/release、Activity/Service、提示音、交接、媒体与 SDP/ICE、offer/answer、PC connected、ready，以及首个非零下行 PCM 播放回调。桥接记录 offer、silence/resume、realtime/start、SDP、ready、开场请求。**播放回调发生在 render 之前，不等同扬声器已发声，更不是人耳感知延迟。**
 
 私有存储位置：
 
@@ -50,21 +50,23 @@ python3 scripts/voice_timing.py collect --serial 你的SERIAL --out /tmp/xiaodu-
 
 | 现象 | 先看哪里 |
 |---|---|
-| 喊词没双音 | `raw_kws_hits` 是否增加、是否 `wake_ready`、麦克风是否仍保留；别直接归因于云端 |
+| 喊词没双音 | factory看`factory_wake_hits`/`factory_wake_phase`，local才看`raw_kws_hits`，并检查`wake_ready`和占用状态；别直接归因于云端 |
 | 有双音没联网 | APK“连接设置”、桥接 `/health`、管理机防火墙、Codex socket 发现 |
 | 加载失败 | `/dev/xiaodu-speech-http/bootstrap.log`、DCS 是否激活、JNI/机型/原厂版本是否匹配 |
 | `app_server_not_found` | 当前用户、套接字监听者、Codex 运行方式；别连接管理套接字冒充 RPC |
 | v3 被拒绝 | 当前 Codex 协议和账号权限；不假设所有账号都有同样实验能力 |
 | 有光球无声音 | 当前媒体音量、PC 状态、播放回调/非零 PCM 与数据包计数 |
-| 多次挂断后不能再唤醒 | 客户端是否释放媒体、模块是否恢复采音，收集同 call_id 时间记录 |
+| 多次挂断后不能再唤醒 | 客户端是否释放媒体、模块是否恢复所选唤醒入口，收集同 call_id 时间记录 |
 | 切歌失败 | 目标播放器是否提供 MediaSession 与对应 action，避免连点 |
 
 ## 退出和手工维护
 
-先 `codex-conversations voice-end` 结束通话，再停止桥接：`systemctl --user stop xiaodu-codex-bridge`。需要停用设备模块时，在 Magisk 中禁用 `xiaodu_speech_http` 后按系统维护流程重启；原厂服务的钩子随进程退出消失。
+先 `xiaodu voice end` 并核验结束通话，再停止桥接：`systemctl --user stop xiaodu-codex-bridge`。需要停用设备模块时，在 Magisk 中禁用 `xiaodu_speech_http` 后按系统维护流程重启；原厂服务的钩子随进程退出消失。
 
 可选时钟通过长按时钟打开设置，关闭“启用简洁时钟”恢复原厂屏保。卸载 APK 前自行决定是否保留其数据。
 
 升级同名设备模块需要先结束通话、保留自己签名和配置，再定向更新模块并重载其原厂宿主进程；**首版没有把这个维护流程做成自动升级脚本**。不要在通话中覆盖正在加载的 JAR 或并发启动多个 watcher。
 
 更具体的已验证 DCS 基线、只读检查、安装中断恢复、日志、重载和永久停用见 [维护手册](maintenance.md)。Codex 的 socket、主对话 ID 和审批条件见 [环境准备](codex-setup.md)。
+
+默认验收口令为“小度小度”；local模式才是“真维斯”。原厂SDK停止ACK只证明本轮唤醒会话退出，不证明物理麦克风断电；本地阈值不能拿来调原厂识别率。安装器不自行录音或开电话，端到端仍需本人日常位置验收。语音增益1.4由旧日用APK获得响度定性确认，新公开配置包未再重装做声学复测。长时间沉默挂断目前是主对话规则，没有新增自动沉默计时器。

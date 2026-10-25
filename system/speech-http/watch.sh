@@ -18,6 +18,33 @@ trap cleanup EXIT
 trap 'exit 0' TERM INT
 while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2 9>&-; done
 while [ ! -f "$mod/disable" ] && [ ! -f "$mod/remove" ]; do
+    # Register a small adapter in the factory's existing IPC provider. Native
+    # alarms remain owned by the original engine; bootstrap never creates one.
+    alarm_pid=$(pidof com.baidu.launcher)
+    case "$alarm_pid" in ''|*[!0-9]*) ;; *)
+        alarm_start=$("$bb" awk '{print $22}' "/proc/$alarm_pid/stat" 2>/dev/null)
+        alarm_sha=$("$bb" sha256sum "$mod/speech-http.jar" | "$bb" awk '{print $1}')
+        alarm_stamp="$alarm_pid:$alarm_start:$alarm_sha"
+        if [ "$(cat "$state/alarm-host" 2>/dev/null)" != "$alarm_stamp" ]; then
+            alarm_app=/data/data/com.baidu.launcher
+            alarm_owner=$(stat -c '%u:%g' "$alarm_app" 2>/dev/null)
+            case "$alarm_owner" in ''|*[!0-9:]*) ;; *)
+                alarm_data=$alarm_app/files/xiaodu-control
+                mkdir -p "$alarm_data";chmod 700 "$alarm_data"
+                cp "$mod/speech-http.jar" "$alarm_data/speech-http.jar.new"
+                chown "$alarm_owner" "$alarm_data" "$alarm_data/speech-http.jar.new"
+                chmod 600 "$alarm_data/speech-http.jar.new"
+                mv -f "$alarm_data/speech-http.jar.new" "$alarm_data/speech-http.jar"
+                restorecon -R "$alarm_data" >/dev/null 2>&1
+                "$bb" timeout -s TERM 10 "$mod/frida-inject" -p "$alarm_pid" -s "$mod/alarm-loader.js" >"$state/alarm-bootstrap.log" 2>&1 9>&-
+                if "$bb" grep -q '"kind":"alarm_control_loaded"' "$state/alarm-bootstrap.log";then
+                    echo "$alarm_stamp" > "$state/alarm-host";chmod 600 "$state/alarm-host"
+                fi
+                ;;
+            esac
+        fi
+        ;;
+    esac
     if ! pidof xiaodu-control >/dev/null 2>&1; then
         CLASSPATH="$mod/speech-http.jar" /system/bin/app_process /system/bin --nice-name=xiaodu-control local.xiaodu.speech.DeviceControl >/dev/null 2>&1 9>&- &
     fi
@@ -49,7 +76,7 @@ while [ ! -f "$mod/disable" ] && [ ! -f "$mod/remove" ]; do
     fi
     voice=$("$bb" wget -q -T 3 -O - http://127.0.0.1:8765/v1/voice/status 2>/dev/null)
     case "$voice" in
-        *'"state":"wake_ready"'*|*'"state":"acknowledging"'*|*'"state":"listening"'*|*'"state":"realtime_'*)
+        *'"state":"wake_ready"'*|*'"state":"wake_starting"'*|*'"state":"acknowledging"'*|*'"state":"listening"'*|*'"state":"realtime_'*)
             [ -f "$state/cpu-held" ] || { echo xiaodu-zhenweisi > /sys/power/wake_lock 2>/dev/null && touch "$state/cpu-held"; };;
         *) echo xiaodu-zhenweisi > /sys/power/wake_unlock 2>/dev/null;rm -f "$state/cpu-held";;
     esac

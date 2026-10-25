@@ -13,7 +13,8 @@ public final class MicrophoneHandoff {
         if(reserved)throw new IllegalStateException("kws_already_reserved");
         reserved=true;return true;
     }
-    /** Called only after AudioRecord.release() has returned (or creation failed). */
+    /** Local source: AudioRecord.release returned. Native source: SDK stop ACK.
+     * The caller records which source acknowledgement was actually observed. */
     public synchronized void kwsReleased(){reserved=false;notifyAll();}
     public synchronized void claim(String id) throws IOException {
         if(client!=null&&!client.equals(id))throw new IOException("microphone_owned_by_other_call");
